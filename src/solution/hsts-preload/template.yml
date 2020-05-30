@@ -1,0 +1,261 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: HSTS Enabler for domains, after deployment request preloading on https://hstspreload.org
+Parameters:
+  HostedZoneId:
+    Description: Required to register HostName automatically, otherwise must configure
+      DNS in your current provider
+    Type: AWS::Route53::HostedZone::Id
+
+  NakedDomainName:
+    Description: Naked Domain Name 
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid domain name, eg: mywebsite.com'  
+
+  WebsiteHostName:
+    Description: Host Name, leave empty to have one generated
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
+
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: "ACM Certificate Arn, eg: arn:aws:acm:${AWS::REGION}:${AWS::ACCOUNT}:certificate/9e50ea95-8325-41bf-b318-8ec0fbcc70bb"    
+
+  InfraDeploymentStackName:
+    Type: String
+    Default: infra-deployment
+    Description: Name of the Infra Deployment Stack
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Network Configuration
+      Parameters:
+      - HostedZoneId
+      - NakedDomainName
+      - WebsiteHostName
+    ParameterLabels:    
+      NakedDomainName:
+        default: Domain Name
+      WebsiteHostName:
+        default: Website Host Name
+      HostedZoneId:
+        default: Hosted Zone Name      
+    
+Conditions:
+  HasNakedDomainName:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: NakedDomainName
+  HasHostedZoneId:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: HostedZoneId
+  UseDnsRegistration:
+    Fn::And:
+    - Condition: HasNakedDomainName
+    - Condition: HasHostedZoneId
+
+Resources:
+  LambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - 'lambda.amazonaws.com'
+            - 'edgelambda.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  LambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    DeletionPolicy: Retain    
+    Properties:
+      Code:
+        ZipFile:
+          Fn::Sub: |
+            'use strict';
+
+            const host='https://${WebsiteHostName}';
+
+            exports.handler = (event, context, callback) => {
+
+              console.log("request", JSON.stringify(event))
+              
+              var request = event.Records[0].cf.request;
+              let location = request.querystring == "" ? host + request.uri : host + request.uri + '?' + request.querystring
+              
+              const response = {
+                status: '301',
+                statusDescription: '301 Moved Permanently',
+                headers: {
+                  Location: [
+                    {
+                        "key":"Location",
+                        "value":location
+                    }
+                  ],
+                  'Strict-Transport-Security': [
+                    {
+                      "key":"Strict-Transport-Security",
+                      "value":'max-age=63072000; includeSubDomains; preload'
+                    }
+                  ],
+                },
+              };
+              
+              console.log("response", JSON.stringify(response))
+              callback(null, response);
+            };
+      Handler: 'index.handler'
+      MemorySize: 128
+      Role: 
+        Fn::GetAtt: LambdaRole.Arn
+      Runtime: 'nodejs12.x'
+      Timeout: 5
+
+  VersionedLambdaFunction:
+    Type: 'AWS::Lambda::Version'
+    Properties:
+      FunctionName: 
+        Ref: LambdaFunction
+
+  CloudFrontIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: 
+          Fn::Sub: ${AWS::StackName}-Identity
+
+  StaticBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      WebsiteConfiguration:
+        ErrorDocument: index.html
+        IndexDocument: index.html   
+      LoggingConfiguration:
+        DestinationBucketName: 
+          Fn::ImportValue:
+            Fn::Sub: ${InfraDeploymentStackName}-LogsBucketName
+        LogFilePrefix:
+          Fn::Sub: ${AWS::StackName}-StaticBucket
+
+  StaticBucketPolicy:
+    DeletionPolicy: Retain
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: 
+        Ref: StaticBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - "s3:GetObject"
+            Effect: "Allow"
+            Resource: 
+              Fn::Sub: "arn:aws:s3:::${StaticBucket}/*"
+            Principal:
+              CanonicalUser: 
+                Fn::GetAtt: CloudFrontIdentity.S3CanonicalUserId
+
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cloudfront-distribution.html
+
+  CloudFrontDistribution:
+    DependsOn: CloudFrontIdentity
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Aliases: 
+          - Ref: NakedDomainName
+        IPV6Enabled: true                     
+        Origins:
+          - Id: StaticBucket
+            DomainName: 
+              Fn::GetAtt: StaticBucket.DomainName
+            S3OriginConfig:
+              OriginAccessIdentity: 
+                Fn::Sub: "origin-access-identity/cloudfront/${CloudFrontIdentity}"                
+        DefaultCacheBehavior:
+          LambdaFunctionAssociations:
+            - EventType: 'origin-request'
+              LambdaFunctionARN: 
+                Ref: VersionedLambdaFunction
+          Compress: true
+          AllowedMethods:
+          - HEAD
+          - GET
+          - OPTIONS
+          CachedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          TargetOriginId: StaticBucket
+          ForwardedValues:
+            QueryString: 'true'
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+          MinTTL: '86400'  
+          MaxTTL: '31536000'      
+        Enabled: true  
+        HttpVersion: http2
+        ViewerCertificate:
+          AcmCertificateArn: 
+            Ref: CertificateArn
+          SslSupportMethod: sni-only 
+          # MinimumProtocolVersion: TLSv1.1_2016
+        Logging:
+          Bucket: 
+            Fn::Sub: 
+              - ${LogsBucketName}.s3.amazonaws.com
+              - LogsBucketName: 
+                  Fn::ImportValue: 
+                    Fn::Sub: ${InfraDeploymentStackName}-LogsBucketName
+          IncludeCookies: false
+          Prefix: 
+            Ref: NakedDomainName
+          
+  DNSRecord:
+    Type: AWS::Route53::RecordSet    
+    Condition: UseDnsRegistration
+    Properties:
+      HostedZoneId:
+        Fn::If:
+          - UseDnsRegistration
+          - Ref: HostedZoneId
+          - Ref: AWS::NoValue 
+      Name: 
+        Ref: NakedDomainName
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: 
+          Fn::GetAtt: CloudFrontDistribution.DomainName     
+
+Outputs:
+  NakedDomainUrl:
+    Value: 
+      Fn::Sub: https://${NakedDomainName}
+    Description: App Host Url  
+  CloudFrontUrl:
+    Value: 
+      Fn::Sub: https://${CloudFrontDistribution.DomainName}
+    Description: CloudFront Url
+  StaticBucketName:
+    Value: 
+      Ref: StaticBucket
+    Description: Name of S3 bucket to hold landing page content
