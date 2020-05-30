@@ -10,29 +10,39 @@ Resources:
     Type: AWS::S3::Bucket      
     Properties:
       LoggingConfiguration: 
-        DestinationBucketName: !Ref LogsBucket
-        LogFilePrefix: !Sub ${AWS::StackName}/deploy-bucket/
+        DestinationBucketName: 
+          Fn::Ref: LogsBucket
+        LogFilePrefix: 
+          Fn::Sub: ${AWS::StackName}/deploy-bucket/
   BackupBucket:
     Type: AWS::S3::Bucket  
     Properties:
       LoggingConfiguration: 
-        DestinationBucketName: !Ref LogsBucket
-        LogFilePrefix: !Sub ${AWS::StackName}/backup-bucket/                 
+        DestinationBucketName: 
+          Fn::Ref: LogsBucket
+        LogFilePrefix: 
+          Fn::Sub: ${AWS::StackName}/backup-bucket/
 Outputs:
   LogsBucketName:
-    Value: !Ref LogsBucket
+    Value:
+      Fn::Ref: LogsBucket
     Description: Bucket to store log files
     Export:
-      Name: !Sub ${AWS::StackName}-LogsBucketName
+      Name: 
+        Fn::Sub: ${AWS::StackName}-LogsBucketName
   DeployBucketName:
-    Value: !Ref DeployBucket
+    Value:
+      Fn::Ref: DeployBucket
     Description: Bucket to store deployment artifacts
     Export:
-      Name: !Sub ${AWS::StackName}-DeployBucketName
+      Name: 
+        Fn::Sub: ${AWS::StackName}-DeployBucketName
   BackupBucketName:
-    Value: !Ref BackupBucket
+    Value: 
+      Fn::Ref: BackupBucket
     Description: Bucket to store RDS or any other backup
     Export:
-      Name: !Sub ${AWS::StackName}-BackupBucketName
+      Name: 
+        Fn::Sub: ${AWS::StackName}-BackupBucketName
       
 
