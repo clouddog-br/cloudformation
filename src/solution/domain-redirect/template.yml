@@ -1,0 +1,221 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Redirects from one domain to another
+Parameters:
+  HostedZoneId:
+    Description: Required to register HostName automatically, otherwise must configure
+      DNS in your current provider
+    Type: AWS::Route53::HostedZone::Id
+
+  OriginDomainName:
+    Description: Origin Domain Name
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid domain name, eg: mywebsite.com'  
+
+  TargetHostName:
+    Description: Target Host Name
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
+
+  TargetPath:
+    Description: Use specific path starting by / or leave empty to assume the path from origin
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid path or empty string'  
+
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: "ACM Certificate Arn, eg: arn:aws:acm:${AWS::REGION}:${AWS::ACCOUNT}:certificate/9e50ea95-8325-41bf-b318-8ec0fbcc70bb"    
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Network Configuration
+      Parameters:
+      - HostedZoneId
+      - OriginDomainName
+      - TargetHostName
+      - TargetPath
+    - Label:
+        default: Security Configuration
+      Parameters:
+      - CertificateArn    
+    ParameterLabels:    
+      OriginDomainName:
+        default: Origin Domain Name
+      TargetHostName:
+        default: Target Host Name
+      CertificateArn:
+        default: CloudFront Certificate Arn
+
+Conditions:
+  HasOriginDomainName:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: OriginDomainName
+  HasHostedZoneId:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: HostedZoneId
+  UseDnsRegistration:
+    Fn::And:
+    - Condition: HasOriginDomainName
+    - Condition: HasHostedZoneId
+
+Resources:
+  LambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - 'lambda.amazonaws.com'
+            - 'edgelambda.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  LambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: 
+          Fn::Sub: |
+            'use strict';
+            exports.handler = (event, context, callback) => {
+
+              const request = event.Records[0].cf.request;
+
+              const path = '${TargetPath}' === '' ? request.uri : '${TargetPath}';
+
+              const response = {
+                status: '301',
+                statusDescription: '301 Moved Permanently',
+                headers: {
+                  Location: [
+                    {
+                      "key":"Location",
+                      "value":"https://${TargetHostName}"+path
+                    }
+                  ],
+                  'Strict-Transport-Security': [
+                    {
+                      "key":"Strict-Transport-Security",
+                      "value":'max-age=63072000; includeSubDomains; preload'
+                    }
+                  ],
+                  'Cache-Control': [
+                    {
+                      "key":"Cache-Control",
+                      "value":'public, max-age=3600'
+                    }
+                  ]
+                },
+              };
+              callback(null, response);
+            };
+      Handler: 'index.handler'
+      MemorySize: 128
+      Role: 
+        Fn::GetAtt: LambdaRole.Arn
+      Runtime: 'nodejs12.x'
+      Timeout: 5
+
+  VersionedLambdaFunction:
+    Type: 'AWS::Lambda::Version'
+    Properties:
+      FunctionName: 
+        Ref: LambdaFunction
+
+  DNSRecord:
+    Type: AWS::Route53::RecordSet    
+    Condition: UseDnsRegistration
+    Properties:
+      HostedZoneId:
+        Fn::If:
+        - UseDnsRegistration
+        - Ref: HostedZoneId
+        - Ref: AWS::NoValue 
+      Name: 
+        Ref: OriginDomainName
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: 
+          Fn::GetAtt: CloudFrontDistribution.DomainName        
+
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cloudfront-distribution.html
+
+  CloudFrontDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Aliases: 
+          - Ref: OriginDomainName
+        IPV6Enabled: true                     
+        Origins:
+          - Id: DefaultOrigin
+            DomainName: 
+              Ref: TargetHostName
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+                
+        DefaultCacheBehavior:
+          LambdaFunctionAssociations:
+            - EventType: 'origin-request'
+              LambdaFunctionARN: 
+                Ref: VersionedLambdaFunction
+          Compress: true
+          AllowedMethods:
+          - HEAD
+          - GET
+          - OPTIONS
+          CachedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          TargetOriginId: DefaultOrigin
+          ForwardedValues:
+            QueryString: 'false'
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+          MinTTL: '86400'  
+          MaxTTL: '31536000'      
+        Enabled: true  
+        HttpVersion: http2
+        ViewerCertificate:
+          AcmCertificateArn: 
+            Ref: CertificateArn
+          SslSupportMethod: sni-only 
+          # MinimumProtocolVersion: TLSv1.1_2016
+
+Outputs:
+  OriginUrl:
+    Value: 
+      Fn::Sub: https://${OriginDomainName}
+    Description: Origin Domain Url
+  TargetUrl:
+    Value: 
+      Fn::Sub: https://${TargetHostName}/${TargetPath}
+    Description: Origin Domain Url    
+  CloudFrontUrl:
+    Value: 
+      Fn::Sub: https://${CloudFrontDistribution.DomainName}
+    Description: CloudFront Url
