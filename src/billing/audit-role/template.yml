@@ -1,0 +1,98 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Billing Audit role
+Parameters:
+  TrustedAccount:
+    Description: Account 
+    Type: String
+    Default: '267204945647'
+    MinLength: '12'
+    MaxLength: '12'
+    ConstraintDescription: 'must be a valid account number'  
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Details
+      Parameters:
+      - TrustedAccount
+    ParameterLabels:    
+      TrustedAccount:
+        default: Trusted Account Number
+
+Resources:
+  Role: 
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement: 
+          - Effect: Allow
+            Principal:
+              AWS: 
+                Fn::Sub: arn:aws:iam::${TrustedAccount}:root
+            Action:
+             - sts:AssumeRole
+      Path: /
+
+  BillingPolicy:
+    Type: AWS::IAM::Policy
+    Properties:   
+      PolicyName: billing
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: 
+              -  aws-portal:*Billing
+              -  awsbillingconsole:*Billing
+              -  aws-portal:*Usage
+              -  awsbillingconsole:*Usage
+              -  aws-portal:*PaymentMethods
+              -  awsbillingconsole:*PaymentMethods
+              -  budgets:ViewBudget
+              -  budgets:ModifyBudget
+              -  cur:*
+            Resource:
+              - '*'
+      Roles:
+        - !Ref Role
+
+  TrustedAdvisorPolicy:
+    Type: AWS::IAM::Policy
+    Properties:   
+      PolicyName: trusted-advisor  
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: 
+              - trustedadvisor:DescribeAccount
+              - trustedadvisor:DescribeChecks 
+              - trustedadvisor:DescribeCheckSummaries
+            Resource:
+              - '*'
+      Roles:
+        - !Ref Role
+
+  SupportPolicy:
+    Type: AWS::IAM::Policy
+    Properties:   
+      PolicyName: support-center   
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: 
+              - support:*
+              - health:Describe*
+            Resource:
+              - '*'
+      Roles:
+        - !Ref Role        
+        
+Outputs:
+  RoleArn:
+    Value: !GetAtt Role.Arn
+    Description: Billing Audit Role Arn         
