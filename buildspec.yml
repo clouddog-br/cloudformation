@@ -13,18 +13,12 @@ phases:
   build:
     commands:
       - npm run lint
-
+      - cd src/samples/php-basic && zip -r ../php-basic.zip .
+      
 artifacts:
   files:
     - "**/*.yml"
+    - "samples/*.zip"
   name: templates
   discard-paths: no
-  base-directory: src    
-
-  secondary-artifacts:
-    sample01:
-      files:
-        - "**/*"
-      name: php-basic
-      discard-paths: no
-      base-directory: samples/php-basic
+  base-directory: src
