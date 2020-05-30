@@ -11,7 +11,7 @@ Resources:
     Properties:
       LoggingConfiguration: 
         DestinationBucketName: 
-          Fn::Ref: LogsBucket
+          Ref: LogsBucket
         LogFilePrefix: 
           Fn::Sub: ${AWS::StackName}/deploy-bucket/
   BackupBucket:
@@ -19,27 +19,27 @@ Resources:
     Properties:
       LoggingConfiguration: 
         DestinationBucketName: 
-          Fn::Ref: LogsBucket
+          Ref: LogsBucket
         LogFilePrefix: 
           Fn::Sub: ${AWS::StackName}/backup-bucket/
 Outputs:
   LogsBucketName:
     Value:
-      Fn::Ref: LogsBucket
+      Ref: LogsBucket
     Description: Bucket to store log files
     Export:
       Name: 
         Fn::Sub: ${AWS::StackName}-LogsBucketName
   DeployBucketName:
     Value:
-      Fn::Ref: DeployBucket
+      Ref: DeployBucket
     Description: Bucket to store deployment artifacts
     Export:
       Name: 
         Fn::Sub: ${AWS::StackName}-DeployBucketName
   BackupBucketName:
     Value: 
-      Fn::Ref: BackupBucket
+      Ref: BackupBucket
     Description: Bucket to store RDS or any other backup
     Export:
       Name: 
