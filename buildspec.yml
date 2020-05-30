@@ -5,9 +5,6 @@ cache:
     - node_modules
 
 phases:
-  install:
-    runtime-versions:
-      docker: 18
   pre_build:
     commands:
       - echo Installing Dependencies
@@ -16,10 +13,10 @@ phases:
   build:
     commands:
       - npm run lint
-      
+
 artifacts:
   files:
-    - **/*.yml
+    - "**/*.yml"
   name: templates
   discard-paths: no
   base-directory: src    
