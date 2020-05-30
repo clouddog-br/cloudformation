@@ -1,0 +1,25 @@
+version: 0.2
+
+cache:
+  paths:
+    - node_modules
+
+phases:
+  install:
+    runtime-versions:
+      docker: 18
+  pre_build:
+    commands:
+      - echo Installing Dependencies
+      - npm install
+
+  build:
+    commands:
+      - npm run lint
+      
+artifacts:
+  files:
+    - **/*.yml
+  name: templates
+  discard-paths: no
+  base-directory: src    
