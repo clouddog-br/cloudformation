@@ -22,9 +22,9 @@ artifacts:
   base-directory: src    
 
   secondary-artifacts:
-    sample-php-basic:
+    sample01:
       files:
-        - "**/*.yml"
-      name: sample-php-basic
+        - "**/*"
+      name: php-basic
       discard-paths: no
-      base-directory: src/samples/php-basic
+      base-directory: samples/php-basic
