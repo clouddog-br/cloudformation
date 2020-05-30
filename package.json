@@ -1,0 +1,33 @@
+{
+  "name": "cloudformation",
+  "version": "1.0.0",
+  "description": "AWS CloudFormation Templates",
+  "main": "index.js",
+  "scripts": {
+    "commit": "commit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clouddog-br/cloudformation.git"
+  },
+  "keywords": [
+    "cloudformation"
+  ],
+  "author": "CloudDog",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/clouddog-br/cloudformation/issues"
+  },
+  "homepage": "https://github.com/clouddog-br/cloudformation#readme",
+  "devDependencies": {
+    "@commitlint/cli": "^8.3.5",
+    "@commitlint/config-conventional": "^8.3.4",
+    "@commitlint/prompt-cli": "^8.3.5",
+    "husky": "^4.2.5"
+  },
+  "husky": {
+    "hooks": {
+      "commit-msg": "commitlint -E HUSKY_GIT_PARAMS"
+    }
+  }
+}
