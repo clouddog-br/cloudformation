@@ -20,3 +20,11 @@ artifacts:
   name: templates
   discard-paths: no
   base-directory: src    
+
+  secondary-artifacts:
+    sample-php-basic:
+      files:
+        - "**/*.yml"
+      name: sample-php-basic
+      discard-paths: no
+      base-directory: src/samples/php-basic
