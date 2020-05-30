@@ -14,6 +14,7 @@ phases:
     commands:
       - npm run lint
       - cd src/samples/php-basic && zip -r ../php-basic.zip .
+      - cd src/samples/java-spring && zip -r ../java-spring.zip .
 
 artifacts:
   files:
