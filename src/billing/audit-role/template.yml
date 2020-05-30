@@ -57,7 +57,7 @@ Resources:
             Resource:
               - '*'
       Roles:
-        - !Ref Role
+        - Ref: Role
 
   TrustedAdvisorPolicy:
     Type: AWS::IAM::Policy
@@ -74,7 +74,7 @@ Resources:
             Resource:
               - '*'
       Roles:
-        - !Ref Role
+        - Ref: Role
 
   SupportPolicy:
     Type: AWS::IAM::Policy
@@ -90,9 +90,10 @@ Resources:
             Resource:
               - '*'
       Roles:
-        - !Ref Role        
+        - Ref: Role        
         
 Outputs:
   RoleArn:
-    Value: !GetAtt Role.Arn
+    Value: 
+      Fn::GetAtt: Role.Arn
     Description: Billing Audit Role Arn         
