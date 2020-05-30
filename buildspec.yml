@@ -14,10 +14,14 @@ phases:
     commands:
       - npm run lint
       - cd src/samples/php-basic && zip -r ../php-basic.zip .
-      
+
 artifacts:
   files:
-    - "**/*.yml"
+    - "billing/**/*.yml"
+    - "build/**/*.yml"
+    - "infra/**/*.yml"
+    - "network/**/*.yml"
+    - "solution/**/*.yml"
     - "samples/*.zip"
   name: templates
   discard-paths: no
