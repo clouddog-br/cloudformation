@@ -1,0 +1,273 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Fargate Web Application
+Parameters:
+
+  RepositoryName:
+    Description: The name of the codecommit and ecr repositories
+    Type: String
+
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: Container Image Tag
+
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: "ACM Certificate Arn, eg: arn:aws:acm:${AWS::REGION}:${AWS::ACCOUNT}:certificate/9e50ea95-8325-41bf-b318-8ec0fbcc70bb"
+
+  VpcId:
+    Type: String
+    Description: VpcId of your existing Virtual Private Cloud (VPC)
+    ConstraintDescription: must be the VPC Id of an existing Virtual Private Cloud.
+
+  Subnets:
+    Type: String
+    Description: The list of SubnetIds in your Virtual Private Cloud (VPC)
+    ConstraintDescription: must be a list of at least two existing subnets associated with at least two different availability zones. They should be residing in the selected Virtual Private Cloud
+
+  DesiredCount:
+    Type: Number
+    Default: 1
+    Description: Default Container Instance Count
+
+  MaxCount:
+    Type: Number
+    Default: 4
+    Description: Maximum Container Instance Count
+
+  AutoScalingTargetValue:
+    Type: Number
+    Default: 50
+    Description: AutoScaling Threshold
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Network Configuration
+        Parameters:
+          - VpcId
+    ParameterLabels:
+      VpcId:
+        default: VpcId
+
+Resources:
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Enable HTTP from internet
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "80"
+          ToPort: "80"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: "443"
+          ToPort: "443"
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-AlbSecurityGroup
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets: !Split [ ",", !Ref Subnets ] 
+      SecurityGroups:
+        - Ref: AlbSecurityGroup
+
+  AlbListener80:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: 443
+            StatusCode: HTTP_301
+      LoadBalancerArn:
+        Ref: Alb
+      Port: 80
+      Protocol: HTTP
+
+  AlbListener443:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn:
+            Ref: TargetGroup
+      LoadBalancerArn:
+        Ref: Alb
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Matcher:
+        HttpCode: "200,301,302"
+      HealthCheckPath: /health-check
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: ["sts:AssumeRole"]
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Path: /
+
+  ContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Container Security Group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+  AutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole'
+
+  LogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub /ecs/${AWS::StackName}/${RepositoryName}
+      RetentionInDays: 30
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - LogGroup
+    Properties:
+      Family: !Sub ${AWS::StackName}
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !Ref Role
+      TaskRoleArn: !Ref Role
+      Cpu: 512
+      Memory: 1GB
+      RequiresCompatibilities:
+        - FARGATE
+      ContainerDefinitions:
+        - Name: !Ref RepositoryName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/${RepositoryName}:${ImageTag}
+          Essential: true
+          PortMappings:
+            - ContainerPort: 80
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub /ecs/${AWS::StackName}/${RepositoryName}
+              awslogs-region: !Sub ${AWS::Region}
+              awslogs-stream-prefix: ecs
+        
+  ServiceDefinition:
+    Type: AWS::ECS::Service
+    DependsOn: 
+      - AlbListener443      
+    Properties:
+      Cluster: !Ref EcsCluster
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      TaskDefinition: !Ref TaskDefinition
+
+      # DeploymentController:
+      #   Type: CODE_DEPLOY
+
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+
+      LoadBalancers:
+        - ContainerName: !Ref RepositoryName
+          ContainerPort: 80
+          TargetGroupArn: !Ref TargetGroup
+
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ContainerSecurityGroup
+          Subnets: !Split [ ",", !Ref Subnets ] 
+
+  AutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MinCapacity: !Ref DesiredCount
+      MaxCapacity: !Ref MaxCount
+      ResourceId: !Join ['/', [service, !Ref EcsCluster, !GetAtt ServiceDefinition.Name]]
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+      RoleARN: !GetAtt AutoScalingRole.Arn
+
+  AutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: "high-cpu"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref AutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 5
+        ScaleOutCooldown: 30
+        TargetValue: !Ref AutoScalingTargetValue
+
+Outputs:
+  AlbUrl:
+    Value: !GetAtt Alb.DNSName
+    Description: Application Load Balancer DNS
+    Export:
+      Name: !Sub ${AWS::StackName}-AlbUrl  
+
+  TargetGroupArn:
+    Value: !Ref TargetGroup
+    Description: Target Group 1 Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-TargetGroupArn  
+
+  ClusterName:
+    Value: !Ref EcsCluster
+    Description: ECS Cluster Name
+    Export:
+      Name: !Sub ${AWS::StackName}-ClusterName 
+
+  ServiceName:
+    Value: !GetAtt ServiceDefinition.Name
+    Description: Service Definition Name
+    Export:
+      Name: !Sub ${AWS::StackName}-ServiceName  

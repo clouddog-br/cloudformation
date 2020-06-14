@@ -1,0 +1,454 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Static Website Infrastructure
+Parameters:
+  HostedZoneId:
+    Description: Required to register HostName automatically, otherwise must configure
+      DNS in your current provider
+    Type: AWS::Route53::HostedZone::Id
+
+  WebsiteHostName:
+    Description: Host Name, leave empty to have one generated
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
+
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: "ACM Certificate Arn, eg: arn:aws:acm:${AWS::REGION}:${AWS::ACCOUNT}:certificate/9e50ea95-8325-41bf-b318-8ec0fbcc70bb"    
+
+  DeployerRoleArn:
+    Type: String
+    Default: ''
+    Description: "CodeBuild/CodeDeploy Role from DevOps Account that should be able to deploy to static bucket"    
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Network Configuration
+      Parameters:
+      - HostedZoneId
+      - WebsiteHostName
+    ParameterLabels:     
+      WebsiteHostName:
+        default: Website Host Name
+      HostedZoneId:
+        default: Hosted Zone Name      
+    
+Conditions:
+  HasWebsiteHostName:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: WebsiteHostName
+  HasHostedZoneId:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: HostedZoneId
+  UseDnsRegistration:
+    Fn::And:
+    - Condition: HasWebsiteHostName
+    - Condition: HasHostedZoneId
+  UseMultiAccount:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: DeployerRoleArn
+  UseSingleAccount:
+    Fn::Equals:
+    - ''
+    - Ref: DeployerRoleArn      
+
+Resources:
+
+  StaticBucketLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Condition: UseMultiAccount
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - 'lambda.amazonaws.com'
+            - 'edgelambda.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+      Policies:
+        - PolicyName: allow_s3
+          PolicyDocument: 
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListAllMyBuckets     
+                Resource:
+                  - "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject     
+                  - s3:GetObjectAcl
+                  - s3:GetObjectVersion
+                  - s3:GetObjectTagging      
+                  - s3:PutObject     
+                  - s3:PutObjectAcl                
+                  - s3:PutObjectTagging
+                Resource:
+                  - !Sub ${StaticBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub ${StaticBucket.Arn}                
+
+  StaticBucketLambdaFunction:
+    Condition: UseMultiAccount
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          from json import dumps
+          import boto3
+          import logging
+          import urllib.parse
+          import json
+          import botocore
+
+          # Instantiate the S3 client
+          s3 = boto3.client('s3')
+
+          # Logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          # Constants (this is the canonical ID of your account)
+
+          buckets = s3.list_buckets()
+          BUCKETOWNERID = buckets['Owner']['ID']
+
+          def lambda_handler(event, context):
+              logger.info("Received event:\n" + dumps(event, indent=2))
+
+              # Get the bucket and key from the event
+              bucket = event['Records'][0]['s3']['bucket']['name']
+              key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
+              
+              # Get the object's ACL 
+              try: 
+                  response = s3.get_object_acl(
+                      Bucket=bucket,
+                      Key=key
+                  )
+                  
+                  # set the owner ID value to the canonical ID of your account
+                  ownerID = response['Owner']['ID']
+                  
+                  # head object to use for the content-type specified in the copy request
+                  object_head = s3.head_object(
+                      Bucket=bucket,
+                      Key=key
+                  )
+
+                  #if the object's owner ID doesn't match the bucket owner's ID perform the ownership change
+                  if ownerID != BUCKETOWNERID:
+                      s3.copy_object(
+                          Bucket=bucket, 
+                          Key=key,
+                          ContentType=object_head['ContentType'],
+                          MetadataDirective='REPLACE',
+                          CopySource={'Bucket': bucket, 'Key': key}
+                      )
+                      logger.info("Ownership change completed successfully!")
+                  else:
+                      logger.info("You already own this object")
+              except botocore.exceptions.ClientError as e:
+                  error_code = e.response['Error']['Code']
+                  if error_code == 403 or "AccessDenied":
+                      s3.copy_object(
+                          Bucket=bucket, 
+                          Key=key,
+                          MetadataDirective='REPLACE',
+                          CopySource={'Bucket': bucket, 'Key': key}
+                      )
+                  else: 
+                      print ("Unexpected error in ClientError statement")
+              except Exception as e: 
+                  logger.info(e)
+                  logger.info('Error copying object {} from bucket {}. Check your logs.'.format(key, bucket))
+                  raise e
+      Handler: 'index.lambda_handler'
+      MemorySize: 128
+      Role: !GetAtt StaticBucketLambdaRole.Arn
+      Runtime: 'python3.7'
+      Timeout: 5
+
+  DNSRecord:
+    Type: AWS::Route53::RecordSet    
+    Condition: UseDnsRegistration
+    Properties:
+      HostedZoneId:
+        Fn::If:
+        - UseDnsRegistration
+        - Ref: HostedZoneId
+        - Ref: AWS::NoValue 
+      Name: !Ref WebsiteHostName
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt CloudFrontDistribution.DomainName        
+
+  Identity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub ${AWS::StackName}
+
+  StaticBucket:
+    DeletionPolicy: Delete
+    Type: AWS::S3::Bucket
+    Properties:
+      # For New Stacks
+      # https://aws.amazon.com/pt/blogs/mt/resolving-circular-dependency-in-provisioning-of-amazon-s3-buckets-with-aws-lambda-event-notifications/
+      # NotificationConfiguration:
+      #   LambdaConfigurations: 
+      #     - Event: s3:ObjectCreated:Put
+      #       Function: !GetAtt StaticBucketLambdaFunction.Arn
+      VersioningConfiguration:
+        Status: Enabled
+      WebsiteConfiguration:
+        ErrorDocument: index.html
+        IndexDocument: index.html   
+
+  StaticBucketInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: UseMultiAccount
+    Properties:
+      FunctionName: !GetAtt StaticBucketLambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !GetAtt StaticBucket.Arn
+
+  StaticBucketSingleAccountPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Condition: UseSingleAccount
+    Properties:
+      Bucket: !Ref StaticBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - "s3:GetObject"
+            Effect: "Allow"
+            Resource: !Sub "arn:aws:s3:::${StaticBucket}/*"
+            Principal:
+              CanonicalUser: !GetAtt Identity.S3CanonicalUserId
+
+  StaticBucketMultiAccountPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Condition: UseMultiAccount
+    Properties:
+      Bucket: !Ref StaticBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - "s3:GetObject"
+            Effect: "Allow"
+            Resource: !Sub "arn:aws:s3:::${StaticBucket}/*"
+            Principal:
+              CanonicalUser: !GetAtt Identity.S3CanonicalUserId
+          - Action:
+              - "s3:*"
+            Effect: "Allow"
+            Resource: 
+              - !Sub "arn:aws:s3:::${StaticBucket}/*"
+              - !Sub "arn:aws:s3:::${StaticBucket}"
+            Principal:
+              AWS: !Ref DeployerRoleArn
+
+  ApplyNotificationFunctionRole:
+    Type: AWS::IAM::Role
+    Condition: UseMultiAccount
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
+      Policies:
+        - PolicyName: S3BucketNotificationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowBucketNotification
+                Effect: Allow
+                Action: s3:PutBucketNotification
+                Resource:
+                  - !Sub 'arn:aws:s3:::${StaticBucket}'
+                  - !Sub 'arn:aws:s3:::${StaticBucket}/*'
+
+  ApplyBucketNotificationFunction:
+    Type: AWS::Lambda::Function
+    Condition: UseMultiAccount
+    Properties:
+      Description: Updates NotificationConfiguration in a Bucket
+      Handler: index.handler
+      Runtime: python3.7
+      Role: !GetAtt ApplyNotificationFunctionRole.Arn
+      Timeout: 240
+      Code:
+        ZipFile: |
+          import boto3
+          import logging
+          import json
+          import cfnresponse
+
+          s3Client = boto3.client('s3')
+          logger = logging.getLogger()
+          logger.setLevel(logging.DEBUG)
+
+          def addBucketNotification(bucketName, notificationId, functionArn):
+            notificationResponse = s3Client.put_bucket_notification_configuration(
+              Bucket=bucketName,
+              NotificationConfiguration={
+                'LambdaFunctionConfigurations': [
+                  {
+                    'Id': notificationId,
+                    'LambdaFunctionArn': functionArn,
+                    'Events': [
+                      's3:ObjectCreated:Put'
+                    ]
+                  },
+                ]
+              }
+            )
+            return notificationResponse
+
+          def create(properties, physical_id):
+            bucketName = properties['S3Bucket']
+            notificationId = properties['NotificationId']
+            functionArn = properties['FunctionARN']
+            response = addBucketNotification(bucketName, notificationId, functionArn)
+            logger.info('AddBucketNotification response: %s' % json.dumps(response))
+            return cfnresponse.SUCCESS, physical_id
+
+          def update(properties, physical_id):
+            bucketName = properties['S3Bucket']
+            notificationId = properties['NotificationId']
+            functionArn = properties['FunctionARN']
+            response = addBucketNotification(bucketName, notificationId, functionArn)
+            logger.info('AddBucketNotification response: %s' % json.dumps(response))
+            return cfnresponse.SUCCESS, physical_id
+
+          def delete(properties, physical_id):
+            return cfnresponse.SUCCESS, None
+
+          def handler(event, context):
+            logger.info('Received event: %s' % json.dumps(event))
+
+            status = cfnresponse.FAILED
+            new_physical_id = None
+
+            try:
+              properties = event.get('ResourceProperties')
+              physical_id = event.get('PhysicalResourceId')
+
+              status, new_physical_id = {
+                'Create': create,
+                'Update': update,
+                'Delete': delete
+              }.get(event['RequestType'], lambda x, y: (cfnresponse.FAILED, None))(properties, physical_id)
+            except Exception as e:
+              logger.error('Exception: %s' % e)
+              status = cfnresponse.FAILED
+            finally:
+              cfnresponse.send(event, context, status, {}, new_physical_id)
+
+  ApplyNotification:
+    Type: Custom::ApplyNotification
+    Condition: UseMultiAccount    
+    Properties:
+      ServiceToken: !GetAtt ApplyBucketNotificationFunction.Arn
+      S3Bucket: !Ref StaticBucket
+      FunctionARN: !GetAtt StaticBucketLambdaFunction.Arn
+      NotificationId: S3ObjectCreatedEvent
+
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cloudfront-distribution.html
+
+  CloudFrontDistribution:
+    DependsOn: Identity
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Aliases: 
+          - Ref: WebsiteHostName
+        IPV6Enabled: true
+        CustomErrorResponses:
+          - ErrorCode: 400
+            ErrorCachingMinTTL: 300            
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ErrorCachingMinTTL: 300            
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ErrorCachingMinTTL: 300            
+            ResponseCode: 200
+            ResponsePagePath: /index.html                        
+        Origins:
+          - Id: StaticBucket
+            DomainName: !GetAtt StaticBucket.DomainName
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${Identity}"             
+        DefaultCacheBehavior:
+          Compress: true
+          AllowedMethods:
+          - HEAD
+          - DELETE
+          - POST
+          - GET
+          - OPTIONS
+          - PUT
+          - PATCH
+          CachedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          TargetOriginId: StaticBucket
+          ForwardedValues:
+            QueryString: 'false'
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https           
+          MinTTL: '0'
+          DefaultTTL: '3600'
+          MaxTTL: '31536000'                    
+        Enabled: true  
+        HttpVersion: http2
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: sni-only 
+          MinimumProtocolVersion: TLSv1.1_2016
+
+Outputs:
+  AppHostUrl:
+    Value: !Sub https://${WebsiteHostName}
+    Description: App Host Url  
+  CloudFrontUrl:
+    Value: !Sub https://${CloudFrontDistribution.DomainName}
+    Description: CloudFront Url
+  StaticBucketName:
+    Value: !Ref StaticBucket
+    Description: Name of S3 bucket to hold landing page content

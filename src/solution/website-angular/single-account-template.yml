@@ -1,0 +1,95 @@
+---
+Description: Automate provisioning of CodeBuild with CodePipeline, CodeCommit, and CodeDeploy. 
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  EmailAddress:
+    Description: Email Address for sending SNS notifications for CodeCommit
+    Type: String
+
+  DevHostedZoneId:
+    Description: Required to register HostName automatically, otherwise must configure
+      DNS in your current provider
+    Type: AWS::Route53::HostedZone::Id
+
+  DevWebsiteHostName:
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.dev.mywebsite.com'  
+
+  DevCertificateArn:
+    Type: String
+    Default: ""
+    Description: "ACM Certificate Arn, eg: arn:aws:acm:${AWS::REGION}:${AWS::ACCOUNT}:certificate/9e50ea95-8325-41bf-b318-8ec0fbcc70bb"
+
+  StgHostedZoneId:
+    Description: Required to register HostName automatically, otherwise must configure
+      DNS in your current provider
+    Type: AWS::Route53::HostedZone::Id
+
+  StgWebsiteHostName:
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.stg.mywebsite.com'  
+
+  StgCertificateArn:
+    Type: String
+    Default: ""
+    Description: "ACM Certificate Arn, eg: arn:aws:acm:${AWS::REGION}:${AWS::ACCOUNT}:certificate/9e50ea95-8325-41bf-b318-8ec0fbcc70bb"
+  
+Resources:
+  RepositoryStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/codebuild-angular/repository.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        EmailAddress: !Ref EmailAddress
+        RepositoryName: !Ref AWS::StackName   
+
+  DevBuild:
+    DependsOn: DevRuntime
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/codebuild-angular/codebuild.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName     
+        DeployBucket: !GetAtt DevRuntime.Outputs.StaticBucket 
+        Environment: dev
+        BranchName: development
+
+  DevRuntime:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/codebuild-angular/cloudfront.yml
+      TimeoutInMinutes: '90'
+      Parameters:  
+        HostedZoneId: !Ref DevHostedZoneId
+        WebsiteHostName: !Ref DevWebsiteHostName
+        CertificateArn: !Ref DevCertificateArn          
+
+  StgBuild:
+    DependsOn: StgRuntime
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/codebuild-angular/codebuild.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName     
+        DeployBucket: !GetAtt StgRuntime.Outputs.StaticBucket 
+        Environment: stg
+        BranchName: master
+
+  StgRuntime:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/codebuild-angular/cloudfront.yml
+      TimeoutInMinutes: '90'
+      Parameters:  
+        HostedZoneId: !Ref StgHostedZoneId
+        WebsiteHostName: !Ref StgWebsiteHostName
+        CertificateArn: !Ref StgCertificateArn               

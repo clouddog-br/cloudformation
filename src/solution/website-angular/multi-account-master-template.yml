@@ -1,0 +1,92 @@
+---
+Description: Static Website Pipeline for Multi Account Deployments 
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  DevDeploymentBucket:
+    Description: The Bucket created in target development account
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.dev.mywebsite.com'  
+
+  StgDeploymentBucket:
+    Description: The Bucket created in target staging account
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.stg.mywebsite.com'  
+
+  PrdDeploymentBucket:
+    Description: The Bucket created in target production account
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
+
+Conditions:
+  HasDevelopment:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: DevDeploymentBucket
+
+  HasStaging:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: StgDeploymentBucket
+
+  HasProduction:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: PrdDeploymentBucket
+
+Resources:
+  code:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/code/template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName 
+
+  dev:
+    Type: AWS::CloudFormation::Stack
+    Condition: HasDevelopment
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName     
+        DeployBucket: !Ref DevDeploymentBucket 
+        Environment: dev
+        BranchName: development
+
+  stg:
+    Type: AWS::CloudFormation::Stack
+    Condition: HasStaging
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName     
+        DeployBucket: !Ref StgDeploymentBucket 
+        Environment: stg
+        BranchName: master     
+
+  prd:
+    Type: AWS::CloudFormation::Stack
+    Condition: HasProduction
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName     
+        DeployBucket: !Ref PrdDeploymentBucket 
+        OnCodeChangeTrigger: false
+        Environment: prd
+        BranchName: master              

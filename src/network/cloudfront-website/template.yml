@@ -1,0 +1,112 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Simple Cloudfront Infrastructure
+Parameters:
+  HostedZoneId:
+    Description: Required to register HostName automatically, otherwise must configure
+      DNS in your current provider
+    Type: AWS::Route53::HostedZone::Id
+
+  WebsiteHostName:
+    Description: Host Name, leave empty to have one generated
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
+
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: "ACM Certificate Arn, eg: arn:aws:acm:${AWS::REGION}:${AWS::ACCOUNT}:certificate/9e50ea95-8325-41bf-b318-8ec0fbcc70bb"    
+
+  LoadBalancerUrl:
+    Type: String
+    Default: ''
+    Description: "Url do Load Balancer"
+
+Conditions:
+  HasWebsiteHostName:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: WebsiteHostName
+  HasHostedZoneId:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: HostedZoneId
+  UseDnsRegistration:
+    Fn::And:
+    - Condition: HasWebsiteHostName
+    - Condition: HasHostedZoneId
+
+Resources:
+
+  DNSRecord:
+    Type: AWS::Route53::RecordSet    
+    Condition: UseDnsRegistration
+    Properties:
+      HostedZoneId:
+        Fn::If:
+        - UseDnsRegistration
+        - Ref: HostedZoneId
+        - Ref: AWS::NoValue 
+      Name: !Ref WebsiteHostName
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt CloudFrontDistribution.DomainName    
+
+  CloudFrontDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Aliases: 
+          - Ref: WebsiteHostName
+        IPV6Enabled: true                       
+        Origins:
+          - Id: LoadBalancer
+            DomainName: !Ref LoadBalancerUrl
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginReadTimeout: 60 
+              OriginKeepaliveTimeout: 30               
+        DefaultCacheBehavior:
+          Compress: true
+          AllowedMethods:
+          - HEAD
+          - DELETE
+          - POST
+          - GET
+          - OPTIONS
+          - PUT
+          - PATCH
+          CachedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          TargetOriginId: LoadBalancer
+          ForwardedValues:
+            Headers: 
+              - Host
+            QueryString: 'true'
+            Cookies:
+              Forward: all                           
+          ViewerProtocolPolicy: redirect-to-https           
+          MinTTL: '0'
+          DefaultTTL: '3600'
+          MaxTTL: '31536000'                              
+        Enabled: true  
+        HttpVersion: http2
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: sni-only 
+          MinimumProtocolVersion: TLSv1.2_2018     
+Outputs:
+  WebsiteUrl:
+    Value: !Sub https://${WebsiteHostName}
+    Description: Website Host Url  
+  CloudFrontUrl:
+    Value: !Sub https://${CloudFrontDistribution.DomainName}
+    Description: CloudFront Url          

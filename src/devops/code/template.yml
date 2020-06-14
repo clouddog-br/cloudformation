@@ -1,0 +1,38 @@
+---
+Description: CodeCommit Repository
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  RepositoryName:
+    Description: The name of the codecommit and ecr repositories
+    Type: String
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterLabels:
+      RepositoryName:
+        default: CodeCommit Repository Name
+
+Resources:
+  Repository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      RepositoryDescription: CodeCommit Repository
+      # Code:
+      #   S3: 
+      #     Bucket: clouddog-solutions-us-east-1
+      #     Key: codebuild/samples/php.zip
+
+Outputs:
+  CodeCommitURL:
+    Value: !Sub https://console.aws.amazon.com/codecommit/home?region=${AWS::Region}#/repository/${RepositoryName}/browse/HEAD/--/
+    Description: Git Repository URL
+
+  CloneUrlSsh:
+    Value: !Sub "git clone ${Repository.CloneUrlSsh}"
+    Description: Git command for CodeCommit repository
+
+  RepositoryArn:
+    Value: !GetAtt Repository.Arn
+    Description: Repository Arn
+

@@ -1,0 +1,85 @@
+---
+Description: Automate provisioning of CodeBuild with CodePipeline, CodeCommit, and CodeDeploy. 
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  # HostedZoneId:
+  #   Description: Required to register HostName automatically, otherwise must configure
+  #     DNS in your current provider
+  #   Type: AWS::Route53::HostedZone::Id
+
+  # WebsiteHostName:
+  #   Type: String
+  #   Default: ''
+  #   MinLength: '0'
+  #   MaxLength: '200'
+  #   ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
+
+  EmailAddress:
+    Description: Email Address for sending SNS notifications for CodeCommit
+    Type: String
+
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: "ACM Certificate Arn, eg: arn:aws:acm:${AWS::REGION}:${AWS::ACCOUNT}:certificate/9e50ea95-8325-41bf-b318-8ec0fbcc70bb"
+
+  VpcId:
+    Type: String
+    Description: VpcId of your existing Virtual Private Cloud (VPC)
+    ConstraintDescription: must be the VPC Id of an existing Virtual Private Cloud.
+
+  Subnets:
+    Type: String
+    Description: The list of SubnetIds in your Virtual Private Cloud (VPC)
+    ConstraintDescription: must be a list of at least two existing subnets associated with at least two different availability zones. They should be residing in the selected Virtual Private Cloud
+
+  DesiredCount:
+    Type: Number
+    Default: 0
+    Description: Container Instance Count
+    
+Resources:
+  RepositoryStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/repository/codecommit-ecr/template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        EmailAddress: !Ref EmailAddress
+        RepositoryName: !Ref AWS::StackName   
+
+  RuntimeStack:
+    DependsOn: RepositoryStack
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/infra/fargate/template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName    
+        CertificateArn: !Ref CertificateArn    
+        VpcId: !Ref VpcId   
+        Subnets: !Ref Subnets
+        DesiredCount: !Ref DesiredCount
+
+  CodeBuildStack:
+    DependsOn: RepositoryStack
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/build/codebuild-fargate/template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName     
+        ServiceName: !GetAtt RuntimeStack.Outputs.ServiceName
+        ClusterName: !GetAtt RuntimeStack.Outputs.ClusterName   
+
+  # CloudFrontStack:
+  #   DependsOn: RuntimeStack
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/codebuild/cloudfront.yml
+  #     TimeoutInMinutes: '90'
+  #     Parameters:  
+  #       LoadBalancerUrl: !GetAtt RuntimeStack.Outputs.AlbUrl
+  #       HostedZoneId: !Ref HostedZoneId
+  #       WebsiteHostName: !Ref WebsiteHostName
+  #       CertificateArn: !Ref CertificateArn           
