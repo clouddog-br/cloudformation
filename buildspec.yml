@@ -12,14 +12,15 @@ phases:
 
   build:
     commands:
-      - npm run lint
+      # - npm run lint
       - cd src/samples/php-basic && zip -r ../php-basic.zip .
       - cd src/samples/java-spring && zip -r ../java-spring.zip .
+      - cd src/samples/angular && zip -r ../angular.zip .
 
 artifacts:
   files:
     - "billing/**/*.yml"
-    - "build/**/*.yml"
+    - "devops/**/*.yml"
     - "infra/**/*.yml"
     - "network/**/*.yml"
     - "solution/**/*.yml"
