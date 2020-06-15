@@ -1,0 +1,97 @@
+---
+Description: Static Website Pipeline for Multi Account Deployments 
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  DevDeploymentBucket:
+    Description: The Bucket created in target development account
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.dev.mywebsite.com'  
+
+  StgDeploymentBucket:
+    Description: The Bucket created in target staging account
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.stg.mywebsite.com'  
+
+  PrdDeploymentBucket:
+    Description: The Bucket created in target production account
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
+
+  ApproverEmail:
+    Description: Email where approval request should be sent
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
+
+Conditions:
+  HasDevelopment: !Not [ !Equals [ '', !Ref DevDeploymentBucket ] ]
+
+  HasStaging: !Not [ !Equals [ '', !Ref StgDeploymentBucket ] ]
+
+  HasProduction: !Not [ !Equals [ '', !Ref PrdDeploymentBucket ] ]
+
+  HasStagingAndProduction: !And 
+    - !Condition HasStaging
+    - !Condition HasProduction
+
+  HasPrdNotification: !And
+    - !Not [ !Equals [ '', !Ref ApproverEmail ] ]
+    - !Condition HasStagingAndProduction
+
+Resources:
+  code:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/code/template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName 
+
+  development:
+    Type: AWS::CloudFormation::Stack
+    Condition: HasDevelopment
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/standard-template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName     
+        DeployBucket: !Ref DevDeploymentBucket 
+        Environment: dev
+        BranchName: development
+
+  master:
+    Type: AWS::CloudFormation::Stack
+    Condition: HasStagingAndProduction
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/staging-production-template.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        RepositoryName: !Ref AWS::StackName     
+        StagingDeployBucket: !Ref StgDeploymentBucket 
+        ProductionDeployBucket: !Ref PrdDeploymentBucket
+        Environment: prd
+        BranchName: master  
+        NotificationTopicArn: !If [ HasPrdNotification, !Ref NotificationTopic, 'AWS::NoValue' ]                        
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasPrdNotification
+
+  NotificationSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasPrdNotification
+    Properties:
+      Endpoint: !Ref ApproverEmail
+      Protocol: email
+      TopicArn: !Ref NotificationTopic        

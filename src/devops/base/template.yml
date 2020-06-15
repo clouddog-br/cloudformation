@@ -1,5 +1,5 @@
 ---
-Description: Configure DevOps Roles and Buckets
+Description: Configure DevOps Roles, Policies and Buckets
 AWSTemplateFormatVersion: '2010-09-09'
 
 Resources:
@@ -180,6 +180,35 @@ Resources:
                 Action: codepipeline:StartPipelineExecution
                 Resource: "*"
 
+  DenyChangesToMasterPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Description: Policy that denies push to master branches
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Action:
+              - codecommit:GitPush
+              - codecommit:DeleteBranch
+              - codecommit:PutFile
+              - codecommit:MergeBranchesByFastForward
+              - codecommit:MergeBranchesBySquash
+              - codecommit:MergeBranchesByThreeWay
+              - codecommit:MergePullRequestByFastForward
+              - codecommit:MergePullRequestBySquash
+              - codecommit:MergePullRequestByThreeWay
+            Resource: 
+              - '*'
+            Condition:
+              StringEqualsIfExists:
+                codecommit:References:
+                  - refs/heads/master
+                  - refs/heads/prod
+              'Null':
+                codecommit:References: false
+
 Outputs:
   ArtifactsBucketName:
     Value:
@@ -211,4 +240,10 @@ Outputs:
     Value: !GetAtt CloudWatchRole.Arn
     Description: CloudWatch Service Role Arn
     Export:
-      Name: !Sub ${AWS::StackName}-CloudWatchRoleArn       
+      Name: !Sub ${AWS::StackName}-CloudWatchRoleArn  
+
+  DenyChangesToMasterPolicyArn:
+    Value: !Ref DenyChangesToMasterPolicy
+    Description: Policy that denies changes to master
+    Export:
+      Name: !Sub ${AWS::StackName}-DenyChangesToMasterPolicyArn         

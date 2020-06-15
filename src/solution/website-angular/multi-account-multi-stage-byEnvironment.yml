@@ -26,6 +26,14 @@ Parameters:
     MaxLength: '200'
     ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
 
+  ApproverEmail:
+    Description: Email where approval request should be sent
+    Type: String
+    Default: ''
+    MinLength: '0'
+    MaxLength: '200'
+    ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
+
 Conditions:
   HasDevelopment:
     Fn::Not:
@@ -45,6 +53,10 @@ Conditions:
       - ''
       - Ref: PrdDeploymentBucket
 
+  HasPrdNotification: !And
+    - !Not [ !Equals [ '', !Ref ApproverEmail ] ]
+    - !Condition HasProduction
+
 Resources:
   code:
     Type: AWS::CloudFormation::Stack
@@ -58,7 +70,7 @@ Resources:
     Type: AWS::CloudFormation::Stack
     Condition: HasDevelopment
     Properties:
-      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/template.yml
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/standard-template.yml
       TimeoutInMinutes: '60'
       Parameters:
         RepositoryName: !Ref AWS::StackName     
@@ -70,7 +82,7 @@ Resources:
     Type: AWS::CloudFormation::Stack
     Condition: HasStaging
     Properties:
-      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/template.yml
+      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/standard-template.yml
       TimeoutInMinutes: '60'
       Parameters:
         RepositoryName: !Ref AWS::StackName     
@@ -82,11 +94,27 @@ Resources:
     Type: AWS::CloudFormation::Stack
     Condition: HasProduction
     Properties:
-      TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/template.yml
+      TemplateURL: !If 
+        - HasPrdNotification
+        - https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/standard-with-approval-template.yml
+        - https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/angular/standard-template.yml
       TimeoutInMinutes: '60'
       Parameters:
         RepositoryName: !Ref AWS::StackName     
         DeployBucket: !Ref PrdDeploymentBucket 
         OnCodeChangeTrigger: false
         Environment: prd
-        BranchName: master              
+        BranchName: master  
+        NotificationTopicArn: !If [ HasPrdNotification, !Ref NotificationTopic, 'AWS::NoValue' ]            
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasPrdNotification
+
+  PrdNotificationSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasPrdNotification
+    Properties:
+      Endpoint: !Ref ApproverEmail
+      Protocol: email
+      TopicArn: !Ref NotificationTopic        

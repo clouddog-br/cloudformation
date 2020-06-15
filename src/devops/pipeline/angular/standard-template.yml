@@ -1,0 +1,169 @@
+---
+Description: Automate Provisioning of CodePipeline for Angular Application
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  RepositoryName:
+    Description: The name of the codecommit repositories
+    Type: String
+
+  DeployBucket:
+    Description: Deployment Bucket
+    Type: String
+
+  BranchName:
+    Description: Branch for Build
+    Type: String
+    Default: master
+
+  Environment:
+    Description: Environment
+    Type: String
+    Default: prd    
+
+  CacheMaxAge:
+    Description: How long will it take until refresh in seconds
+    Type: String
+    Default: 300  
+
+  OnCodeChangeTrigger:
+    Description: Triggers a new Release whenever the code changes
+    Type: String
+    Default: true 
+    AllowedValues:
+      - true
+      - false 
+
+  NotificationTopicArn:
+    Description: Topic to send approval notification
+    Type: String  
+    Default: ''
+
+  DevOpsBaseStackName:
+    Description: Shared Stack with Roles and Buckets
+    Type: String
+    Default: clouddog-devops-base    
+
+Conditions:
+  HasCodeChangeTrigger:
+    Fn::Not:
+    - Fn::Equals:
+      - 'false'
+      - Ref: OnCodeChangeTrigger
+
+Resources:
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:    
+      Description: Build application
+      ServiceRole: 
+        Fn::ImportValue: !Sub ${DevOpsBaseStackName}-CodeBuildRoleArn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        PrivilegedMode: false
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
+            Type: PLAINTEXT
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+      TimeoutInMinutes: 10
+      LogsConfig:
+        CloudWatchLogs: 
+          GroupName: !Sub /clouddog/codebuild/${RepositoryName}
+          Status: ENABLED
+
+  CodePipeLine:
+    Type: AWS::CodePipeline::Pipeline
+    Properties: 
+      ArtifactStore: 
+        Location: 
+          Fn::ImportValue: !Sub ${DevOpsBaseStackName}-ArtifactsBucketName
+        Type: S3      
+      RestartExecutionOnUpdate: False
+      RoleArn: 
+        Fn::ImportValue: !Sub ${DevOpsBaseStackName}-CodePipelineRoleArn
+      Stages:
+        - Name: Source
+          Actions: 
+          - Name: Source
+            ActionTypeId: 
+              Category: Source
+              Owner: AWS
+              Provider: CodeCommit
+              Version: 1
+            Configuration:
+              RepositoryName: !Ref RepositoryName
+              BranchName: !Ref BranchName
+              PollForSourceChanges: False
+            Region: !Ref AWS::Region
+            RunOrder: 1
+            OutputArtifacts:
+              - Name: source-output-artifacts
+        - Name: Build
+          Actions:
+          - Name: Build
+            ActionTypeId:
+              Category: Build
+              Owner: AWS
+              Version: 1
+              Provider: CodeBuild
+            OutputArtifacts:
+              - Name: build-output-artifacts
+            InputArtifacts:
+              - Name: source-output-artifacts
+            Configuration:
+                ProjectName: !Ref CodeBuildProject
+                EnvironmentVariables: !Sub '[{"name":"ENVIRONMENT","value":"${Environment}","type":"PLAINTEXT"}]'
+            RunOrder: 1     
+        - Name: Deploy
+          Actions:
+          - Name: Deploy
+            ActionTypeId:
+              Category: Deploy
+              Owner: AWS
+              Version: 1
+              Provider: S3
+            InputArtifacts:
+              - Name: build-output-artifacts
+            Configuration:
+              BucketName: !Ref DeployBucket
+              CannedACL: bucket-owner-full-control
+              CacheControl: !Sub public, max-age=${CacheMaxAge}
+              Extract: TRUE                  
+            RunOrder: 1  
+
+  CloudWatchEventRule:
+    Type: AWS::Events::Rule
+    Condition: HasCodeChangeTrigger
+    Properties:
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - 'CodeCommit Repository State Change'
+        resources:
+          - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - !Ref BranchName
+      Targets:
+        - Arn: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipeLine} 
+          RoleArn: 
+            Fn::ImportValue: !Sub ${DevOpsBaseStackName}-CloudWatchRoleArn
+          Id: codepipeline   
+
+Outputs:
+  CodeBuildURL:
+    Value: !Sub https://console.aws.amazon.com/codebuild/home?region=${AWS::Region}#/projects/${CodeBuildProject}/view"
+    Description: CodeBuild URL
