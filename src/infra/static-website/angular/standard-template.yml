@@ -1,6 +1,6 @@
 ---
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Static Website Infrastructure
+Description: Static Website Infrastructure for Angular SPA
 Parameters:
   HostedZoneId:
     Description: Required to register HostName automatically, otherwise must configure
