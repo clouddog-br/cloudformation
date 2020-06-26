@@ -18,16 +18,9 @@ Parameters:
     MaxLength: '200'
     ConstraintDescription: 'must be a valid host name, eg: app.mywebsite.com'  
 
-  UseWebHookTrigger:
-    Description: Triggers a new Release whenever the webhook is called
-    Type: String
-    Default: false 
-    AllowedValues:
-      - true
-      - false 
-
 Conditions:
   HasDevelopment: !Not [ !Equals [ '', !Ref DevDeploymentBucket ] ]
+  HasProduction: !Not [ !Equals [ '', !Ref PrdDeploymentBucket ] ]
 
 Resources:
   code:
@@ -52,6 +45,7 @@ Resources:
 
   master:
     Type: AWS::CloudFormation::Stack
+    Condition: HasProduction
     Properties:
       TemplateURL: https://s3.amazonaws.com/clouddog-solutions-us-east-1/devops/pipeline/gatsby/standard-template.yml
       TimeoutInMinutes: '60'
@@ -60,20 +54,3 @@ Resources:
         DeployBucket: !Ref PrdDeploymentBucket
         Environment: prd
         BranchName: master
-
-  WebHook:
-    Type: AWS::CodePipeline::Webhook
-    Properties: 
-      Authentication: UNAUTHENTICATED  
-      AuthenticationConfiguration: {}
-      Filters: 
-        - JsonPath: "$.sys.environment.sys.id" 
-          MatchEquals: master          
-      TargetAction: Source
-      TargetPipeline: !GetAtt master.Outputs.PipelineName
-      TargetPipelineVersion: !GetAtt master.Outputs.PipelineVersion
-
-Outputs:
-  WebHookUrl:
-    Value: !GetAtt WebHook.Url
-    Description: WebHookUrl

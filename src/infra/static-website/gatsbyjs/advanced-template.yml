@@ -5,7 +5,8 @@ Parameters:
   HostedZoneId:
     Description: Required to register HostName automatically, otherwise must configure
       DNS in your current provider
-    Type: AWS::Route53::HostedZone::Id
+    Type: String
+    Default: ''
 
   WebsiteHostName:
     Description: Host Name, leave empty to have one generated
@@ -504,17 +505,17 @@ Resources:
         IPV6Enabled: true
         CustomErrorResponses:
           - ErrorCode: 400
-            ErrorCachingMinTTL: 300            
-            ResponseCode: 200
-            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0            
+            ResponseCode: 404
+            ResponsePagePath: /404/
           - ErrorCode: 403
-            ErrorCachingMinTTL: 300            
-            ResponseCode: 200
-            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0            
+            ResponseCode: 404
+            ResponsePagePath: /404/
           - ErrorCode: 404
-            ErrorCachingMinTTL: 300            
-            ResponseCode: 200
-            ResponsePagePath: /404                        
+            ErrorCachingMinTTL: 0            
+            ResponseCode: 404
+            ResponsePagePath: /404/                       
         Origins:
           - Id: StaticBucket
             DomainName: !GetAtt StaticBucket.DomainName
