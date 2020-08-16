@@ -1,0 +1,1479 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Moodle Cluster
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.medium
+    AllowedValues:
+    - t2.medium
+    - t3.medium
+    - t3.large
+    - t3.xlarge
+    - t3.2xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+  HostName:
+    Description: Host Name, leave empty to have one generated
+    Type: String
+    Default: ''
+    AllowedPattern: "([a-z][a-z0-9\\-\\.]*)?"
+    MinLength: '0'
+    MaxLength: '64'
+    ConstraintDescription: 'must be a valid host name, eg: moodle.example.com, or
+      leave empty to use EC2 hostname'
+  HostedZoneName:
+    Description: Required to register HostName automatically, otherwise must configure
+      DNS in your current provider
+    Type: AWS::Route53::HostedZone::Id
+  CorporateCidrIp:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  AsgDesiredSize:
+    Type: Number
+    Description: Desired capacity of Auto Scaling Group
+    Default: '2'
+  AsgMaxSize:
+    Type: Number
+    Description: Maximum capacity of Auto Scaling Group
+    Default: '4'
+  DBName:
+    Default: moodledb
+    Description: The Moodle database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters.
+  DBMasterPassword:
+    NoEcho: 'true'
+    Description: MySQL master password
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: "[a-zA-Z0-9]*"
+    ConstraintDescription: must contain only alphanumeric characters.
+  DBAllocatedStorage:
+    Description: GB
+    Default: '10'
+    Type: Number
+    MinValue: '5'
+    MaxValue: '200'
+    ConstraintDescription: must contain only integer.
+  DBInstanceClass:
+    Description: RDS instance class
+    Type: String
+    Default: db.t2.small
+    AllowedValues:
+    - db.t2.small
+    - db.t3.micro
+    - db.t3.small
+    - db.t3.medium
+    - db.t3.large
+    ConstraintDescription: must be a valid RDS instance class.
+  DBMultiAZ:
+    Type: String
+    Description: Deploy in multiple Availability Zones
+    AllowedValues:
+    - 'yes'
+    - 'no'
+    Default: 'no'
+  MoodleVersion:
+    Description: Moodle version number or latest development
+    Type: String
+    Default: 3.2.1
+    AllowedValues:
+    - 3.0.8
+    - 3.1.4
+    - 3.2.1
+    - development
+  MoodleAdminPassword:
+    NoEcho: 'true'
+    Description: Moodle Admin Password
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: "[a-zA-Z0-9]*"
+    ConstraintDescription: must contain only alphanumeric characters.
+  MoodleAdminEmail:
+    Description: Moodle Admin Email
+    Type: String
+    MinLength: '1'
+    MaxLength: '200'
+    AllowedPattern: "[a-zA-Z0-9@\\.]*"
+    ConstraintDescription: must contain only alphanumeric characters.
+  MoodleSiteFullName:
+    Description: Moodle Site Full Name
+    Type: String
+    MinLength: '1'
+    MaxLength: '200'
+    AllowedPattern: "[a-zA-Z0-9 \\-]*"
+    ConstraintDescription: must contain only alphanumeric characters.
+  MoodleSiteShortName:
+    Description: Moodle Site Short Name
+    Type: String
+    MinLength: '3'
+    MaxLength: '20'
+    AllowedPattern: "[a-zA-Z0-9 \\-]*"
+    ConstraintDescription: must contain only alphanumeric characters.
+  MoodleUUID:
+    NoEcho: 'true'
+    Description: UUID used for several purposes in cloudformation
+    Default: 8824dc9d-b814-4add-b239-454aeef0a4e4
+    Type: String
+    MinLength: '36'
+    MaxLength: '36'
+    AllowedPattern: "[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}"
+    ConstraintDescription: must contain a valid UUID
+  CacheNodeType:
+    Description: Cache Node Type
+    Type: String
+    Default: cache.t3.micro
+    AllowedValues:
+    - cache.t3.micro
+    - cache.t3.small
+    - cache.t3.medium
+    ConstraintDescription: must be a valid Cache node type.
+
+  CacheMultiAZ:
+    Type: String
+    Description: Deploy in multiple Availability Zones
+    AllowedValues:
+    - 'yes'
+    - 'no'
+    Default: 'no'
+  CacheNumNodes:
+    Type: Number
+    Description: Cache cluster size
+    Default: '1'
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Moodle Configuration
+      Parameters:
+      - MoodleSiteFullName
+      - MoodleSiteShortName
+      - MoodleAdminEmail
+      - MoodleAdminPassword
+      - MoodleVersion
+      - MoodleUUID
+    - Label:
+        default: Network Configuration
+      Parameters:
+      - HostedZoneName
+      - HostName
+      - CorporateCidrIp
+    - Label:
+        default: Web Server Configuration
+      Parameters:
+      - InstanceType
+      - KeyName
+      - AsgDesiredSize
+      - AsgMaxSize
+    - Label:
+        default: Cache Configuration
+      Parameters:
+      - CacheNodeType
+      - CacheNumNodes
+      - CacheMultiAZ
+    - Label:
+        default: Database Configuration
+      Parameters:
+      - DBInstanceClass
+      - DBName
+      - DBMasterPassword
+      - DBAllocatedStorage
+      - DBMultiAZ
+    ParameterLabels:
+      MoodleUUID:
+        default: Moodle UUID
+      MoodleVersion:
+        default: Moodle Version
+      MoodleAdminEmail:
+        default: Admin Email
+      MoodleAdminPassword:
+        default: Admin Password
+      MoodleSiteFullName:
+        default: Site Full Name
+      MoodleSiteShortName:
+        default: Site Short Name
+      HostName:
+        default: Host Name
+      HostedZoneName:
+        default: Hosted Zone Name
+      CorporateCidrIp:
+        default: Admin IP Address
+      InstanceType:
+        default: Instance Type
+      KeyName:
+        default: SSH Key Name
+      AsgMaxSize:
+        default: Maximum Node Count
+      DBInstanceClass:
+        default: Instance Type
+      DBName:
+        default: Name
+      DBMasterPassword:
+        default: Password
+      DBAllocatedStorage:
+        default: Capacity
+      DBMultiAZ:
+        default: High Availability
+      CacheNodeType:
+        default: Instance Type
+      CacheNumNodes:
+        default: Quantity
+      CacheMultiAZ:
+        default: High Availability
+
+Mappings:
+  AWSInstanceType2Arch:
+    t2.nano:
+      Arch: HVM64
+    t2.micro:
+      Arch: HVM64
+    t2.small:
+      Arch: HVM64
+    t2.medium:
+      Arch: HVM64
+    t2.large:
+      Arch: HVM64
+    t2.xlarge:
+      Arch: HVM64
+    t2.2xlarge:
+      Arch: HVM64
+    m4.large:
+      Arch: HVM64
+    m4.xlarge:
+      Arch: HVM64
+    m4.2xlarge:
+      Arch: HVM64
+    m4.4xlarge:
+      Arch: HVM64
+    c4.large:
+      Arch: HVM64
+    c4.2xlarge:
+      Arch: HVM64
+    c4.4xlarge:
+      Arch: HVM64
+    r4.large:
+      Arch: HVM64
+    r4.xlarge:
+      Arch: HVM64
+    r4.2xlarge:
+      Arch: HVM64
+    r4.8xlarge:
+      Arch: HVM64
+    r4.16xlarge:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    us-east-1:
+      HVM64: ami-0b33d91d
+    us-east-2:
+      HVM64: ami-c55673a0
+    us-west-2:
+      HVM64: ami-f303fb93
+    us-west-1:
+      HVM64: ami-11790371
+    eu-west-1:
+      HVM64: ami-c39604b0
+    eu-central-1:
+      HVM64: ami-7df01e12
+    ap-northeast-1:
+      HVM64: ami-6154bb00
+    ap-northeast-2:
+      HVM64: ami-69e92207
+    ap-southeast-1:
+      HVM64: ami-a2c111c1
+    ap-southeast-2:
+      HVM64: ami-d9d7f9ba
+    sa-east-1:
+      HVM64: ami-106ee57c
+    cn-north-1:
+      HVM64: ami-05a66c68
+  MoodleDownload:
+    3.0.8:
+      URL: https://download.moodle.org/download.php/direct/stable30/moodle-3.0.8.tgz
+    3.1.4:
+      URL: https://download.moodle.org/download.php/direct/stable31/moodle-3.1.4.tgz
+    3.2.1:
+      URL: https://download.moodle.org/download.php/direct/stable32/moodle-3.2.1.tgz
+    development:
+      URL: https://download.moodle.org/download.php/direct/moodle/moodle-latest.zip
+  CacheMultiAZMap:
+    'yes':
+      AZMode: cross-az
+    'no':
+      AZMode: single-az
+
+Conditions:
+  UseHostName:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: HostName
+  HasHostedZoneName:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: HostedZoneName
+  DNSRegistration:
+    Fn::And:
+    - Condition: UseHostName
+    - Condition: HasHostedZoneName
+  Is-DBMultiAZ:
+    Fn::Equals:
+    - Ref: DBMultiAZ
+    - 'yes'
+
+Resources:
+
+  #
+  # VPC
+  #
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.32.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 172.32.0.0/20
+      AvailabilityZone:
+        Fn::Select:
+        - '0'
+        - Fn::GetAZs: ''
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+
+  Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock: 172.32.16.0/20
+      AvailabilityZone:
+        Fn::Select:
+        - '1'
+        - Fn::GetAZs: ''
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+
+  Subnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 172.32.32.0/20
+      AvailabilityZone:
+        Fn::Select:
+        - '2'
+        - Fn::GetAZs: ''
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: !Ref AWS::StackName
+
+  Route1:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet1
+      RouteTableId: !Ref RouteTable
+
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet2
+      RouteTableId: !Ref RouteTable
+
+  SubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet3
+      RouteTableId: !Ref RouteTable
+
+  # 
+  # Security
+  # 
+  BastionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Bastion access from Corporate Network
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: !Ref CorporateCidrIp
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-Bastion
+
+  LoadBalancerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Enable HTTP from internet
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '443'
+        ToPort: '443'
+        CidrIp: 0.0.0.0/0
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-LB
+
+  WebServerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Enable HTTP access via port 80 locked down to the load balancer
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        SourceSecurityGroupId: !GetAtt LoadBalancerSG.GroupId
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: !Ref CorporateCidrIp
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-WebServer
+
+  NetworkFilesystemSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn:
+    - WebServerSG
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Security group for mount target
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '2049'
+        ToPort: '2049'
+        SourceSecurityGroupId: !GetAtt WebServerSG.GroupId
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-NetworkFilesystem
+
+  CacheSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Elasticache Security Group
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '6379'
+        ToPort: '6379'
+        SourceSecurityGroupId: !GetAtt WebServerSG.GroupId
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-Cache
+
+  DatabaseSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn:
+    - WebServerSG
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Access from WebServer
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '3306'
+        ToPort: '3306'
+        SourceSecurityGroupId: !GetAtt WebServerSG.GroupId
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-DB
+
+  # 
+  # Network Filesystem
+  # 
+  FileSystem:
+      Type: AWS::EFS::FileSystem
+      Properties:
+        PerformanceMode: generalPurpose
+        ThroughputMode: bursting #bursting ou provisioned
+        ProvisionedThroughputInMibps: !Ref AWS::NoValue #somente para provisioned 1-1024
+        FileSystemTags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-MoodleData
+
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref Subnet1
+      SecurityGroups:
+      - Ref: NetworkFilesystemSG
+
+  MountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref Subnet2
+      SecurityGroups:
+      - Ref: NetworkFilesystemSG
+
+  MountTarget3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref Subnet3
+      SecurityGroups:
+      - Ref: NetworkFilesystemSG
+
+  # 
+  # Cache
+  # 
+  CacheSubnetGroup:
+      Type: AWS::ElastiCache::SubnetGroup
+      Properties:
+        Description: Cache Subnet Group
+        SubnetIds:
+        - Ref: Subnet1
+        - Ref: Subnet2
+        - Ref: Subnet3
+
+  CacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      AutoMinorVersionUpgrade: 'true'
+      Engine: redis
+      CacheNodeType: !Ref CacheNodeType
+      NumCacheNodes: !Ref CacheNumNodes
+      AZMode: !FindInMap
+        - CacheMultiAZMap
+        - Ref: CacheMultiAZ
+        - AZMode
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      VpcSecurityGroupIds: 
+        - !GetAtt CacheSG.GroupId
+      # NotificationTopicArn: !Ref NotificationTopic
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-MoodleCache
+
+    #  CronRole:
+    #    Type: AWS::IAM::Role
+    #    Properties:
+    #      RoleName:
+    #        Fn::Join:
+    #        - "-"
+    #        - - Ref: AWS::StackName
+    #          - CronRole
+    #      AssumeRolePolicyDocument:
+    #        Version: '2012-10-17'
+    #        Statement:
+    #        - Effect: Allow
+    #          Principal:
+    #            Service: lambda.amazonaws.com
+    #          Action: sts:AssumeRole
+    #      Path: "/"
+    #      Policies:
+    #      - PolicyName:
+    #          Fn::Join:
+    #          - "-"
+    #          - - Ref: AWS::StackName
+    #            - CronRole
+    #        PolicyDocument:
+    #          Version: '2012-10-17'
+    #          Statement:
+    #          - Effect: Allow
+    #            Action:
+    #            - logs:CreateLogGroup
+    #            - logs:CreateLogStream
+    #            - logs:PutLogEvents
+    #            Resource: arn:aws:logs:*:*:*
+  #    Cron:
+  #      Type: AWS::Lambda::Function
+  #      Properties:
+  #        Description:
+  #          Fn::Join:
+  #          - "-"
+  #          - - Ref: AWS::StackName
+  #            - Cron
+  #        Handler: index.handler
+  #        Role:
+  #          Fn::GetAtt:
+  #          - CronRole
+  #          - Arn
+  #        Code:
+  #          ZipFile:
+  #            Fn::Join:
+  #            - ''
+  #            - - 'var http = require(''http'');
+   
+  #  '
+  #              - 'exports.handler = function (event, context) {
+   
+  #  '
+  #              - "  http.get(process.env.CRON_URL, function (result) {\n"
+  #              - "    console.log('Success, with: ' + result.statusCode);\n"
+  #              - "    context.done(null);\n"
+  #              - "  }).on('error', function (err) {\n"
+  #              - "    console.log('Error, with: ' + err.message);\n"
+  #              - '    context.done("Failed");
+   
+  #  '
+  #              - "  });\n"
+  #              - "};\n"
+  #        Runtime: nodejs12.x
+  #        Timeout: '300'
+  #        Environment:
+  #          Variables:
+  #            CRON_URL:
+  #              Fn::Join:
+  #              - ''
+  #              - - http://
+  #                - Fn::If:
+  #                  - UseHostName
+  #                  - Ref: HostName
+  #                  - Fn::GetAtt:
+  #                    - LoadBalancer
+  #                    - DNSName
+  #                - "/admin/cron.php?password="
+  #                - Ref: MoodleUUID
+  #    EventRuleToCronPermission:
+  #      Type: AWS::Lambda::Permission
+  #      Properties:
+  #        FunctionName:
+  #          Ref: Cron
+  #        Action: lambda:InvokeFunction
+  #        Principal: events.amazonaws.com
+  #        SourceArn:
+  #          Fn::GetAtt:
+  #          - EventRule
+  #          - Arn
+  #    EventRule:
+  #      Type: AWS::Events::Rule
+  #      Properties:
+  #        Description:
+  #          Fn::Join:
+  #          - "-"
+  #          - - Ref: AWS::StackName
+  #            - EventRuleCron
+  #        ScheduleExpression: rate(1 minute)
+  #        Targets:
+  #        - Arn:
+  #            Fn::GetAtt:
+  #            - Cron
+  #            - Arn
+  #          Id: Cron
+  #    CloudWatchPutMetricsRole:
+  #      Type: AWS::IAM::Role
+  #      Properties:
+  #        AssumeRolePolicyDocument:
+  #          Statement:
+  #          - Effect: Allow
+  #            Principal:
+  #              Service:
+  #              - ec2.amazonaws.com
+  #            Action:
+  #            - sts:AssumeRole
+  #        Path: "/"
+  #    CloudWatchPutMetricsRolePolicy:
+  #      Type: AWS::IAM::Policy
+  #      Properties:
+  #        PolicyName: CloudWatch_PutMetricData
+  #        PolicyDocument:
+  #          Version: '2012-10-17'
+  #          Statement:
+  #          - Sid: CloudWatchPutMetricData
+  #            Effect: Allow
+  #            Action:
+  #            - cloudwatch:PutMetricData
+  #            Resource:
+  #            - "*"
+  #        Roles:
+  #        - Ref: CloudWatchPutMetricsRole
+  #    CloudWatchPutMetricsInstanceProfile:
+  #      Type: AWS::IAM::InstanceProfile
+  #      Properties:
+  #        Path: "/"
+  #        Roles:
+  #        - Ref: CloudWatchPutMetricsRole
+  #    LaunchConfiguration:
+  #      Type: AWS::AutoScaling::LaunchConfiguration
+  #      Metadata:
+  #        AWS::CloudFormation::Init:
+  #          configSets:
+  #            moodle_install:
+  #            - setup
+  #            - install_moodle
+  #            - configure_moodle
+  #          setup:
+  #            packages:
+  #              yum:
+  #                nfs-utils: []
+  #                nginx: []
+  #            files:
+  #              "/home/ec2-user/post_nfsstat":
+  #                content:
+  #                  Fn::Join:
+  #                  - ''
+  #                  - - "#!/bin/bash\n"
+  #                    - "\n"
+  #                    - 'INPUT="$(cat)"
+   
+  #  '
+  #                    - 'CW_JSON_OPEN=''{ "Namespace": "EFS", "MetricData": [ ''
+   
+  #  '
+  #                    - 'CW_JSON_CLOSE='' ] }''
+   
+  #  '
+  #                    - 'CW_JSON_METRIC=''''
+   
+  #  '
+  #                    - 'METRIC_COUNTER=0
+   
+  #  '
+  #                    - "\n"
+  #                    - 'for COL in 1 2 3 4 5 6; do
+   
+  #  '
+  #                    - "\n"
+  #                    - " COUNTER=0\n"
+  #                    - " METRIC_FIELD=$COL\n"
+  #                    - " DATA_FIELD=$(($COL+($COL-1)))\n"
+  #                    - "\n"
+  #                    - " while read line; do\n"
+  #                    - "   if [[ COUNTER -gt 0 ]]; then\n"
+  #                    - "\n"
+  #                    - "     LINE=`echo $line | tr -s ' ' `\n"
+  #                    - '     AWS_COMMAND="aws cloudwatch put-metric-data --region '
+  #                    - Ref: AWS::Region
+  #                    - "\"\n"
+  #                    - "     MOD=$(( $COUNTER % 2))\n"
+  #                    - "\n"
+  #                    - "     if [ $MOD -eq 1 ]; then\n"
+  #                    - "       METRIC_NAME=`echo $LINE | cut -d ' ' -f $METRIC_FIELD`\n"
+  #                    - "     else\n"
+  #                    - "       METRIC_VALUE=`echo $LINE | cut -d ' ' -f $DATA_FIELD`\n"
+  #                    - "     fi\n"
+  #                    - "\n"
+  #                    - '     if [[ -n "$METRIC_NAME" && -n "$METRIC_VALUE" ]]; then
+   
+  #  '
+  #                    - "       INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)\n"
+  #                    - '       CW_JSON_METRIC="$CW_JSON_METRIC { \"MetricName\": \"$METRIC_NAME\",
+  #                      \"Dimensions\": [{\"Name\": \"InstanceId\", \"Value\": \"$INSTANCE_ID\"}
+  #                      ], \"Value\": $METRIC_VALUE },"
+   
+  #  '
+  #                    - "       unset METRIC_NAME\n"
+  #                    - "       unset METRIC_VALUE\n"
+  #                    - "\n"
+  #                    - "       METRIC_COUNTER=$((METRIC_COUNTER+1))\n"
+  #                    - "       if [ $METRIC_COUNTER -eq 20 ]; then\n"
+  #                    - "         # 20 is max metric collection size, so we have to submit
+  #                      here\n"
+  #                    - "         aws cloudwatch put-metric-data --region "
+  #                    - Ref: AWS::Region
+  #                    - ' --cli-input-json "`echo $CW_JSON_OPEN ${CW_JSON_METRIC%?} $CW_JSON_CLOSE`"
+   
+  #  '
+  #                    - "\n"
+  #                    - "         # reset\n"
+  #                    - "         METRIC_COUNTER=0\n"
+  #                    - "         CW_JSON_METRIC=''\n"
+  #                    - "       fi\n"
+  #                    - "     fi  \n"
+  #                    - "\n"
+  #                    - "\n"
+  #                    - "\n"
+  #                    - "     COUNTER=$((COUNTER+1))\n"
+  #                    - "   fi\n"
+  #                    - "\n"
+  #                    - '   if [[ "$line" == "Client nfs v4:" ]]; then
+   
+  #  '
+  #                    - "     # the next line is the good stuff \n"
+  #                    - "     COUNTER=$((COUNTER+1))\n"
+  #                    - "   fi\n"
+  #                    - ' done <<< "$INPUT"
+   
+  #  '
+  #                    - 'done
+   
+  #  '
+  #                    - "\n"
+  #                    - "# submit whatever is left\n"
+  #                    - 'aws cloudwatch put-metric-data --region '
+  #                    - Ref: AWS::Region
+  #                    - ' --cli-input-json "`echo $CW_JSON_OPEN ${CW_JSON_METRIC%?} $CW_JSON_CLOSE`"'
+  #                mode: '000755'
+  #                owner: ec2-user
+  #                group: ec2-user
+  #              "/etc/cron.d/nfsstat":
+  #                content:
+  #                  Fn::Join:
+  #                  - ''
+  #                  - - "* * * * * root /usr/sbin/nfsstat | /home/ec2-user/post_nfsstat\n"
+  #                owner: root
+  #                group: root
+  #            commands:
+  #              01_createdir:
+  #                command: mkdir -p /var/www/data
+  #              02_fstab:
+  #                command:
+  #                  Fn::Sub: echo "${FileSystem}.efs.${AWS::Region}.amazonaws.com:/ /var/www/data
+  #                    nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2
+  #                    0 0" >> /etc/fstab
+  #              03_mount:
+  #                command: mount /var/www/data
+  #              04_chmoddir:
+  #                command: chmod 0777 /var/www/data
+  #            services:
+  #              sysvinit:
+  #                crond:
+  #                  enabled: 'true'
+  #                  ensureRunning: 'true'
+  #          install_moodle:
+  #            packages:
+  #              yum:
+  #                php56: []
+  #                php56-fpm: []
+  #                php56-cli: []
+  #                php56-gd: []
+  #                php56-intl: []
+  #                php56-mbstring: []
+  #                php56-opcache: []
+  #                php56-soap: []
+  #                php56-xml: []
+  #                php56-xmlrpc: []
+  #                php56-process: []
+  #                php56-jsonc: []
+  #                php56-pecl-redis: []
+  #                php56-mysqlnd: []
+  #            sources:
+  #              "/var/www":
+  #                Fn::FindInMap:
+  #                - MoodleDownload
+  #                - Ref: MoodleVersion
+  #                - URL
+  #            files:
+  #              "/etc/nginx/nginx.conf":
+  #                content:
+  #                  Fn::Join:
+  #                  - ''
+  #                  - - 'user nginx;
+   
+  #  '
+  #                    - 'worker_processes auto;
+   
+  #  '
+  #                    - 'error_log /var/log/nginx/error.log;
+   
+  #  '
+  #                    - "pid /var/run/nginx.pid;\n\n"
+  #                    - 'events {
+   
+  #  '
+  #                    - "    worker_connections 1024;\n"
+  #                    - "}\n\n"
+  #                    - 'http {
+   
+  #  '
+  #                    - '    log_format  main  ''$remote_addr - $remote_user [$time_local]
+  #                      "$request" ''
+   
+  #  '
+  #                    - '                      ''$status $body_bytes_sent "$http_referer"
+  #                      ''
+   
+  #  '
+  #                    - "                      '\"$http_user_agent\" \"$http_x_forwarded_for\"';\n\n"
+  #                    - "    access_log  /var/log/nginx/access.log  main;\n\n"
+  #                    - "    sendfile            on;\n"
+  #                    - "    tcp_nopush          on;\n"
+  #                    - "    tcp_nodelay         on;\n"
+  #                    - "    keepalive_timeout   65;\n"
+  #                    - "    types_hash_max_size 2048;\n"
+  #                    - "    include             /etc/nginx/mime.types;\n"
+  #                    - "    default_type        application/octet-stream;\n"
+  #                    - "    include /etc/nginx/conf.d/*.conf;\n\n"
+  #                    - "    index   index.php;\n\n"
+  #                    - "    server {\n"
+  #                    - "        listen       80 default_server;\n"
+  #                    - "        listen       [::]:80 default_server;\n"
+  #                    - "        server_name  localhost;\n"
+  #                    - "        root         /var/www/html;\n\n"
+  #                    - "        location / {\n"
+  #                    - "        }\n\n"
+  #                    - "        location ~ [^/]\\.php(/|$) {\n"
+  #                    - "                fastcgi_split_path_info  ^(.+\\.php)(/.+)$;\n"
+  #                    - "                fastcgi_index            index.php;\n"
+  #                    - "                fastcgi_pass             127.0.0.1:9000;\n"
+  #                    - "                include                  fastcgi_params;\n"
+  #                    - "                fastcgi_param   PATH_INFO       $fastcgi_path_info;\n"
+  #                    - "                fastcgi_param   SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+  #                    - "        }\n\n"
+  #                    - "        location /dataroot/ {\n"
+  #                    - "                internal;\n"
+  #                    - "                alias /var/www/data/;\n"
+  #                    - "        }\n"
+  #                    - "    }\n"
+  #                    - "}\n"
+  #                mode: '000644'
+  #                owner: root
+  #                group: root
+  #              "/etc/php-fpm.d/redis.ini":
+  #                content:
+  #                  Fn::Join:
+  #                  - ''
+  #                  - - 'extension = redis.so
+   
+  #  '
+  #              "/tmp/update-php-ini.sh":
+  #                content:
+  #                  Fn::Join:
+  #                  - ''
+  #                  - - "#!/bin/bash\n"
+  #                    - 'upload_max_filesize=32M
+   
+  #  '
+  #                    - 'post_max_size=32M
+   
+  #  '
+  #                    - 'for key in upload_max_filesize post_max_size
+   
+  #  '
+  #                    - 'do
+   
+  #  '
+  #                    - 'sed -i "s/^\($key\).*/\1 $(eval echo \${$key})/" /etc/php.ini
+   
+  #  '
+  #                    - 'done
+   
+  #  '
+  #                mode: '000500'
+  #                owner: root
+  #                group: root
+  #              "/tmp/config.php":
+  #                content:
+  #                  Fn::Join:
+  #                  - ''
+  #                  - - "<?php\n"
+  #                    - 'unset($CFG);
+   
+  #  '
+  #                    - 'global $CFG;
+   
+  #  '
+  #                    - "$CFG = new stdClass();\n"
+  #                    - |2
+   
+  #                      $CFG->dbtype    = 'mysqli';
+  #                    - "$CFG->dblibrary = 'native';\n"
+  #                    - "$CFG->dbhost    = '"
+  #                    - Fn::GetAtt:
+  #                      - SQLDatabase
+  #                      - Endpoint.Address
+  #                    - "';\n"
+  #                    - "$CFG->dbname    = '"
+  #                    - Ref: DBName
+  #                    - "';\n"
+  #                    - "$CFG->dbuser    = 'master';\n"
+  #                    - "$CFG->dbpass    = '"
+  #                    - Ref: DBMasterPassword
+  #                    - "';\n"
+  #                    - "$CFG->prefix    = '';\n"
+  #                    - "$CFG->dboptions = array('dbpersist' => false,'dbsocket' => false,'dbport'
+  #                      => '','dbhandlesoptions' => false);\n"
+  #                    - "$CFG->wwwroot   = 'http://LB_NAME';\n"
+  #                    - "$CFG->dataroot  = '/var/www/data';\n"
+  #                    - "$CFG->localcachedir = '/var/www/local';\n"
+  #                    - "$CFG->directorypermissions = 02777;\n"
+  #                    - "$CFG->admin = 'admin';\n\n"
+  #                    - "$CFG->xsendfile = 'X-Accel-Redirect';\n"
+  #                    - "$CFG->xsendfilealiases = array('/dataroot/' => $CFG->dataroot);\n\n"
+  #                    - "$CFG->cronclionly=false;\n\n"
+  #                    - "$CFG->cronremotepassword = '"
+  #                    - Ref: MoodleUUID
+  #                    - "';\n\n"
+  #                    - "$CFG->session_handler_class = '\\core\\session\\redis';\n"
+  #                    - "$CFG->session_redis_host = '"
+  #                    - Fn::GetAtt:
+  #                      - CacheCluster
+  #                      - RedisEndpoint.Address
+  #                    - "';\n"
+  #                    - "$CFG->session_redis_port = 6379;  // Optional.;\n"
+  #                    - "$CFG->session_redis_database = 0;  // Optional, default is db
+  #                      0.;\n"
+  #                    - "$CFG->session_redis_prefix = 'session'; // Optional, default
+  #                      is don't set one.;\n"
+  #                    - "$CFG->session_redis_acquire_lock_timeout = 120;;\n"
+  #                    - "$CFG->session_redis_lock_expire = 7200;\n\n"
+  #                    - "$CFG->cachestore_redis = '"
+  #                    - Fn::GetAtt:
+  #                      - CacheCluster
+  #                      - RedisEndpoint.Address
+  #                    - ":6379';\n\n"
+  #                    - 'require_once(__DIR__ . ''/lib/setup.php'');
+   
+  #  '
+  #                mode: '000500'
+  #                owner: root
+  #                group: root
+  #            services:
+  #              sysvinit:
+  #                nginx:
+  #                  enabled: 'true'
+  #                  ensureRunning: 'true'
+  #                php-fpm:
+  #                  enabled: 'true'
+  #                  ensureRunning: 'true'
+  #                crond:
+  #                  enabled: 'true'
+  #                  ensureRunning: 'true'
+  #            commands:
+  #              01_update_php_ini:
+  #                command: "/tmp/update-php-ini.sh"
+  #          configure_moodle:
+  #            commands:
+  #              01_configure_moodle:
+  #                command:
+  #                  Fn::Join:
+  #                  - ";"
+  #                  - - mv -fT /var/www/moodle /var/www/html
+  #                    - Fn::Join:
+  #                      - ''
+  #                      - - export LB_NAME=`echo "
+  #                        - Fn::If:
+  #                          - UseHostName
+  #                          - Ref: HostName
+  #                          - Fn::GetAtt:
+  #                            - LoadBalancer
+  #                            - DNSName
+  #                        - '"|  tr "[:upper:]" "[:lower:]"`'
+  #                    - sed -i "s/LB_NAME/$LB_NAME/g" /tmp/config.php
+  #                    - mv /tmp/config.php /var/www/html
+  #                    - chown -R root /var/www/html
+  #                    - chmod -R 0755 /var/www/html
+  #              02_create_local_dir:
+  #                command:
+  #                  Fn::Join:
+  #                  - ";"
+  #                  - - mkdir /var/www/local
+  #                    - chmod 0777 /var/www/local
+  #              03_install_database:
+  #                cwd: "/var/www/html/admin/cli"
+  #                command:
+  #                  Fn::Join:
+  #                  - ''
+  #                  - - 'if [ -f /var/www/data/.dbinstalled ]; '
+  #                    - "then \n"
+  #                    - "  php upgrade.php "
+  #                    - "    --non-interactive "
+  #                    - "    --allow-unstable; "
+  #                    - 'else touch /var/www/data/.dbinstalled; '
+  #                    - "  php install_database.php"
+  #                    - "    --lang=pt_BR"
+  #                    - '    --adminpass="'
+  #                    - Ref: MoodleAdminPassword
+  #                    - "\""
+  #                    - "    --adminemail="
+  #                    - Ref: MoodleAdminEmail
+  #                    - '    --fullname="'
+  #                    - Ref: MoodleSiteFullName
+  #                    - "\""
+  #                    - '    --shortname="'
+  #                    - Ref: MoodleSiteShortName
+  #                    - "\""
+  #                    - "    --agree-license;"
+  #                    - fi
+  #      Properties:
+  #        AssociatePublicIpAddress: true
+  #        ImageId:
+  #          Fn::FindInMap:
+  #          - AWSRegionArch2AMI
+  #          - Ref: AWS::Region
+  #          - Fn::FindInMap:
+  #            - AWSInstanceType2Arch
+  #            - Ref: InstanceType
+  #            - Arch
+  #        InstanceType:
+  #          Ref: InstanceType
+  #        KeyName:
+  #          Ref: KeyName
+  #        SecurityGroups:
+  #        - Ref: WebServerSG
+  #        IamInstanceProfile:
+  #          Ref: CloudWatchPutMetricsInstanceProfile
+  #        UserData:
+  #          Fn::Base64:
+  #            Fn::Join:
+  #            - ''
+  #            - - "#!/bin/bash -xe\n"
+  #              - 'yum update -y aws-cfn-bootstrap
+   
+  #  '
+  #              - "/opt/aws/bin/cfn-init -v "
+  #              - "         --stack "
+  #              - Ref: AWS::StackName
+  #              - "         --resource LaunchConfiguration "
+  #              - "         --configsets moodle_install "
+  #              - "         --region "
+  #              - Ref: AWS::Region
+  #              - "\n"
+  #              - "/opt/aws/bin/cfn-signal -e $? "
+  #              - "         --stack "
+  #              - Ref: AWS::StackName
+  #              - "         --resource AutoScalingGroup "
+  #              - "         --region "
+  #              - Ref: AWS::Region
+  #              - "\n"
+  #    AutoScalingGroup:
+  #      Type: AWS::AutoScaling::AutoScalingGroup
+  #      DependsOn:
+  #      - MountTarget1
+  #      - MountTarget2
+  #      - MountTarget3
+  #      - InternetGateway
+  #      CreationPolicy:
+  #        ResourceSignal:
+  #          Timeout: PT15M
+  #          Count: 1
+  #      UpdatePolicy:
+  #        AutoScalingScheduledAction:
+  #          IgnoreUnmodifiedGroupSizeProperties: 'true'
+  #        AutoScalingRollingUpdate:
+  #          MinInstancesInService: 2
+  #          MinSuccessfulInstancesPercent: 100
+  #          WaitOnResourceSignals: true
+  #      Properties:
+  #        VPCZoneIdentifier:
+  #        - Ref: Subnet1
+  #        - Ref: Subnet2
+  #        - Ref: Subnet3
+  #        LaunchConfigurationName:
+  #          Ref: LaunchConfiguration
+  #        MinSize: '1'
+  #        MaxSize:
+  #          Ref: AsgMaxSize
+  #        DesiredCapacity:
+  #          Ref: AsgDesiredSize
+  #        TargetGroupARNs:
+  #        - Ref: LoadBalancerTG
+  #        MetricsCollection:
+  #        - Granularity: 1Minute
+  #          Metrics:
+  #          - GroupInServiceInstances
+  #          - GroupTotalInstances
+  #        NotificationConfigurations:
+  #        - NotificationTypes:
+  #          - autoscaling:EC2_INSTANCE_LAUNCH
+  #          - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+  #          - autoscaling:EC2_INSTANCE_TERMINATE
+  #          - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+  #          TopicARN:
+  #            Ref: NotificationTopic
+  #        Tags:
+  #        - Key: Name
+  #          Value:
+  #            Fn::Join:
+  #            - "-"
+  #            - - Ref: AWS::StackName
+  #              - WebServer
+  #          PropagateAtLaunch: 'true'
+  #    AutoScalingUpPolicy:
+  #      Type: AWS::AutoScaling::ScalingPolicy
+  #      Properties:
+  #        AdjustmentType: ChangeInCapacity
+  #        AutoScalingGroupName:
+  #          Ref: AutoScalingGroup
+  #        Cooldown: '120'
+  #        ScalingAdjustment: '1'
+  #    AutoScalingPolicy:
+  #      Type: AWS::AutoScaling::ScalingPolicy
+  #      Properties:
+  #        AutoScalingGroupName:
+  #          Ref: AutoScalingGroup
+  #        AdjustmentType: ChangeInCapacity
+  #        PolicyType: StepScaling
+  #        MetricAggregationType: Average
+  #        EstimatedInstanceWarmup: '120'
+  #        StepAdjustments:
+  #        - MetricIntervalLowerBound: '50'
+  #          MetricIntervalUpperBound: '70'
+  #          ScalingAdjustment: '1'
+  #        - MetricIntervalLowerBound: '90'
+  #          ScalingAdjustment: '2'
+  #    WebServerAlarmHigh:
+  #      Type: AWS::CloudWatch::Alarm
+  #      Properties:
+  #        Statistic: Average
+  #        AlarmDescription:
+  #          Fn::Join:
+  #          - "-"
+  #          - - Ref: AWS::StackName
+  #            - WebServer High CPU Alarm
+  #        Period: '60'
+  #        EvaluationPeriods: '1'
+  #        Threshold: '70'
+  #        AlarmActions:
+  #        - Ref: NotificationTopic
+  #        - Ref: AutoScalingUpPolicy
+  #        Namespace: AWS/EC2
+  #        Dimensions:
+  #        - Name: AutoScalingGroupName
+  #          Value:
+  #            Ref: AutoScalingGroup
+  #        ComparisonOperator: GreaterThanThreshold
+  #        MetricName: CPUUtilization
+  #    LoadBalancer:
+  #      Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  #      Properties:
+  #        LoadBalancerAttributes: []
+  #        Name:
+  #          Fn::Join:
+  #          - "-"
+  #          - - Ref: AWS::StackName
+  #            - LoadBalancer
+  #        Scheme: internet-facing
+  #        SecurityGroups:
+  #        - Ref: LoadBalancerSG
+  #        Subnets:
+  #        - Ref: Subnet1
+  #        - Ref: Subnet2
+  #        - Ref: Subnet3
+  #        Tags: []
+  #    LoadBalancerTG:
+  #      Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  #      Properties:
+  #        HealthCheckIntervalSeconds: 30
+  #        HealthCheckPath: "/"
+  #        HealthCheckPort: traffic-port
+  #        HealthCheckProtocol: HTTP
+  #        HealthCheckTimeoutSeconds: 15
+  #        HealthyThresholdCount: 3
+  #        Matcher:
+  #          HttpCode: '303,200'
+  #        Name:
+  #          Fn::Join:
+  #          - "-"
+  #          - - Ref: AWS::StackName
+  #            - TargetGroup
+  #        Port: 80
+  #        Protocol: HTTP
+  #        TargetGroupAttributes:
+  #        - Key: stickiness.enabled
+  #          Value: 'true'
+  #        - Key: stickiness.type
+  #          Value: lb_cookie
+  #        UnhealthyThresholdCount: 2
+  #        VpcId:
+  #          Ref: VPC
+  #    LoadBalancerListener:
+  #      Type: AWS::ElasticLoadBalancingV2::Listener
+  #      Properties:
+  #        DefaultActions:
+  #        - TargetGroupArn:
+  #            Ref: LoadBalancerTG
+  #          Type: forward
+  #        LoadBalancerArn:
+  #          Ref: LoadBalancer
+  #        Port: 80
+  #        Protocol: HTTP
+  #    SQLDatabase:
+  #      Type: AWS::RDS::DBInstance
+  #      Properties:
+  #        DBName:
+  #          Ref: DBName
+  #        AllocatedStorage:
+  #          Ref: DBAllocatedStorage
+  #        StorageType: gp2
+  #        DBInstanceClass:
+  #          Ref: DBInstanceClass
+  #        DBSubnetGroupName:
+  #          Ref: SQLDatabaseSubnetGroup
+  #        Engine: MySQL
+  #        EngineVersion: '5.7'
+  #        MasterUsername: master
+  #        MultiAZ:
+  #          Fn::If:
+  #          - Is-DBMultiAZ
+  #          - true
+  #          - false
+  #        CopyTagsToSnapshot: true
+  #        MasterUserPassword:
+  #          Ref: DBMasterPassword
+  #        Tags:
+  #        - Key: Name
+  #          Value:
+  #            Fn::Join:
+  #            - "-"
+  #            - - Ref: AWS::StackName
+  #              - MoodleDB
+  #        VPCSecurityGroups:
+            # - Fn::GetAtt:
+            #     - DatabaseSG
+            #     - GroupId
+  #      DeletionPolicy: Snapshot
+  #    SQLDatabaseSubnetGroup:
+  #      Type: AWS::RDS::DBSubnetGroup
+  #      Properties:
+  #        DBSubnetGroupDescription:
+  #          Fn::Join:
+  #          - "-"
+  #          - - Ref: AWS::StackName
+  #            - SQLDatabaseSubnetGroup
+  #        SubnetIds:
+  #        - Ref: Subnet1
+  #        - Ref: Subnet2
+  #        - Ref: Subnet3
+  #    SQLDatabaseEventSubscription:
+  #      Type: AWS::RDS::EventSubscription
+  #      Properties:
+  #        SnsTopicArn:
+  #          Ref: NotificationTopic
+  #        SourceIds:
+  #        - Ref: SQLDatabase
+  #        SourceType: db-instance
+  #    SQLDatabaseHighCPUAlarm:
+  #      Type: AWS::CloudWatch::Alarm
+  #      Properties:
+  #        AlarmDescription:
+  #          Fn::Join:
+  #          - "-"
+  #          - - Ref: AWS::StackName
+  #            - MoodleDB High CPU Alarm
+  #        AlarmActions:
+  #        - Ref: NotificationTopic
+  #        MetricName: CPUUtilization
+  #        Namespace: AWS/RDS
+  #        Statistic: Average
+  #        Period: '60'
+  #        EvaluationPeriods: '2'
+  #        Threshold: '70'
+  #        ComparisonOperator: GreaterThanThreshold
+  #        Dimensions:
+  #        - Name: InstanceId
+  #          Value:
+  #            Ref: SQLDatabase
+  #    DNSRecord:
+  #      Type: AWS::Route53::RecordSet
+  #      Condition: DNSRegistration
+  #      Properties:
+  #        HostedZoneId:
+  #          Fn::If:
+  #          - DNSRegistration
+  #          - Ref: HostedZoneName
+  #          - Ref: AWS::NoValue
+  #        Comment: Moodle DNS
+  #        Name:
+  #          Ref: HostName
+  #        Type: A
+  #        AliasTarget:
+  #          HostedZoneId:
+  #            Fn::GetAtt:
+  #            - LoadBalancer
+  #            - CanonicalHostedZoneID
+  #          DNSName:
+  #            Fn::GetAtt:
+  #            - LoadBalancer
+  #            - DNSName
+  #    NotificationTopic:
+  #      Type: AWS::SNS::Topic
+  #      Properties:
+  #        DisplayName:
+  #          Fn::Join:
+  #          - "-"
+  #          - - Ref: AWS::StackName
+  #            - Notification
+  #    MySubscription:
+  #      Type: AWS::SNS::Subscription
+  #      Properties:
+  #        Endpoint:
+  #          Ref: MoodleAdminEmail
+  #        Protocol: email
+  #        TopicArn:
+  #          Ref: NotificationTopic
+  #  Outputs:
+  #    WebsiteURL:
+  #      Value:
+  #        Fn::Join:
+  #        - ''
+  #        - - http://
+  #          - Fn::If:
+  #            - UseHostName
+  #            - Ref: HostName
+  #            - Fn::GetAtt:
+  #              - LoadBalancer
+  #              - DNSName
+  #          - "/"
+  #      Description: Moodle Website
+  #    ElastiCache:
+  #      Value:
+  #        Fn::GetAtt:
+  #        - CacheCluster
+  #        - RedisEndpoint.Address
+  #      Description: ElastiCache URI
+  #    LoadBalancer:
+  #      Value:
+  #        Fn::Join:
+  #        - ''
+  #        - - http://
+  #          - Fn::GetAtt:
+  #            - LoadBalancer
+  #            - DNSName
+  #          - "/"
+  #      Description: Load Balancer URL
+   
