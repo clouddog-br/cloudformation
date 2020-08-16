@@ -73,10 +73,8 @@ Parameters:
   DBInstanceClass:
     Description: RDS instance class
     Type: String
-    Default: db.t2.small
+    Default: db.t3.small
     AllowedValues:
-    - db.t2.small
-    - db.t3.micro
     - db.t3.small
     - db.t3.medium
     - db.t3.large
@@ -581,13 +579,13 @@ Resources:
   # Cache
   # 
   CacheSubnetGroup:
-      Type: AWS::ElastiCache::SubnetGroup
-      Properties:
-        Description: Cache Subnet Group
-        SubnetIds:
-        - Ref: Subnet1
-        - Ref: Subnet2
-        - Ref: Subnet3
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Cache Subnet Group
+      SubnetIds:
+      - Ref: Subnet1
+      - Ref: Subnet2
+      - Ref: Subnet3
 
   CacheCluster:
     Type: AWS::ElastiCache::CacheCluster
@@ -607,6 +605,67 @@ Resources:
       Tags:
       - Key: Name
         Value: !Sub ${AWS::StackName}-MoodleCache
+
+  # 
+  # Database
+  #         
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot      
+    Properties:
+      DBName: !Ref DBName
+      AllocatedStorage: !Ref DBAllocatedStorage
+      StorageType: gp2
+      DBInstanceClass: !Ref DBInstanceClass
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      Engine: MySQL
+      EngineVersion: '5.7'
+      MasterUsername: master
+      MultiAZ: !If [ Is-DBMultiAZ, true, false ]
+      CopyTagsToSnapshot: true
+      MasterUserPassword: !Ref DBMasterPassword
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-MoodleDB
+      VPCSecurityGroups: 
+        - !GetAtt DatabaseSG.GroupId
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub ${AWS::StackName}-DatabaseSubnetGroup
+      SubnetIds:
+      - Ref: Subnet1
+      - Ref: Subnet2
+      - Ref: Subnet3
+
+  #
+  # Monitoramento
+  #
+  # DatabaseEventSubscription:
+  #   Type: AWS::RDS::EventSubscription
+  #   Properties:
+  #     SnsTopicArn:
+  #       Ref: NotificationTopic
+  #     SourceIds:
+  #     - Ref: Database
+  #     SourceType: db-instance
+      
+  # DatabaseHighCPUAlarm:
+  #   Type: AWS::CloudWatch::Alarm
+  #   Properties:
+  #     AlarmDescription: !Sub ${AWS::StackName}-MoodleDB High CPU Alarm
+  #     AlarmActions: !Ref NotificationTopic
+  #     MetricName: CPUUtilization
+  #     Namespace: AWS/RDS
+  #     Statistic: Average
+  #     Period: '60'
+  #     EvaluationPeriods: '2'
+  #     Threshold: '70'
+  #     ComparisonOperator: GreaterThanThreshold
+  #     Dimensions:
+  #     - Name: InstanceId
+  #       Value: !Ref Database
 
     #  CronRole:
     #    Type: AWS::IAM::Role
@@ -1024,7 +1083,7 @@ Resources:
   #                    - "$CFG->dblibrary = 'native';\n"
   #                    - "$CFG->dbhost    = '"
   #                    - Fn::GetAtt:
-  #                      - SQLDatabase
+  #                      - Database
   #                      - Endpoint.Address
   #                    - "';\n"
   #                    - "$CFG->dbname    = '"
@@ -1332,82 +1391,6 @@ Resources:
   #          Ref: LoadBalancer
   #        Port: 80
   #        Protocol: HTTP
-  #    SQLDatabase:
-  #      Type: AWS::RDS::DBInstance
-  #      Properties:
-  #        DBName:
-  #          Ref: DBName
-  #        AllocatedStorage:
-  #          Ref: DBAllocatedStorage
-  #        StorageType: gp2
-  #        DBInstanceClass:
-  #          Ref: DBInstanceClass
-  #        DBSubnetGroupName:
-  #          Ref: SQLDatabaseSubnetGroup
-  #        Engine: MySQL
-  #        EngineVersion: '5.7'
-  #        MasterUsername: master
-  #        MultiAZ:
-  #          Fn::If:
-  #          - Is-DBMultiAZ
-  #          - true
-  #          - false
-  #        CopyTagsToSnapshot: true
-  #        MasterUserPassword:
-  #          Ref: DBMasterPassword
-  #        Tags:
-  #        - Key: Name
-  #          Value:
-  #            Fn::Join:
-  #            - "-"
-  #            - - Ref: AWS::StackName
-  #              - MoodleDB
-  #        VPCSecurityGroups:
-            # - Fn::GetAtt:
-            #     - DatabaseSG
-            #     - GroupId
-  #      DeletionPolicy: Snapshot
-  #    SQLDatabaseSubnetGroup:
-  #      Type: AWS::RDS::DBSubnetGroup
-  #      Properties:
-  #        DBSubnetGroupDescription:
-  #          Fn::Join:
-  #          - "-"
-  #          - - Ref: AWS::StackName
-  #            - SQLDatabaseSubnetGroup
-  #        SubnetIds:
-  #        - Ref: Subnet1
-  #        - Ref: Subnet2
-  #        - Ref: Subnet3
-  #    SQLDatabaseEventSubscription:
-  #      Type: AWS::RDS::EventSubscription
-  #      Properties:
-  #        SnsTopicArn:
-  #          Ref: NotificationTopic
-  #        SourceIds:
-  #        - Ref: SQLDatabase
-  #        SourceType: db-instance
-  #    SQLDatabaseHighCPUAlarm:
-  #      Type: AWS::CloudWatch::Alarm
-  #      Properties:
-  #        AlarmDescription:
-  #          Fn::Join:
-  #          - "-"
-  #          - - Ref: AWS::StackName
-  #            - MoodleDB High CPU Alarm
-  #        AlarmActions:
-  #        - Ref: NotificationTopic
-  #        MetricName: CPUUtilization
-  #        Namespace: AWS/RDS
-  #        Statistic: Average
-  #        Period: '60'
-  #        EvaluationPeriods: '2'
-  #        Threshold: '70'
-  #        ComparisonOperator: GreaterThanThreshold
-  #        Dimensions:
-  #        - Name: InstanceId
-  #          Value:
-  #            Ref: SQLDatabase
   #    DNSRecord:
   #      Type: AWS::Route53::RecordSet
   #      Condition: DNSRegistration
