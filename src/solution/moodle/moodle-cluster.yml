@@ -820,7 +820,6 @@ Resources:
                 $CFG->prefix    = '';
                 $CFG->dboptions = array('dbpersist' => false, 'dbsocket' => false,'dbport' => '', 'dbhandlesoptions' => false,  'dbcollation' => 'utf8mb4_unicode_ci');
                 $CFG->wwwroot   = 'https://${HostName}';
-                $CFG->reverseproxy = true;
                 $CFG->sslproxy = true;
                 $CFG->dataroot  = '/var/www/data';
                 $CFG->localcachedir = '/var/www/local';
